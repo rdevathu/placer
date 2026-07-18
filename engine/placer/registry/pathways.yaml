@@ -1,0 +1,230 @@
+# The 25 discharge pathways Placer tracks.
+#
+# ehr_disposition maps each pathway to the nearest backend DispositionType
+# value (home | home_with_services | snf | assisted_living | inpatient_rehab |
+# ltac | hospice_home | hospice_facility | undetermined) so assessments posted
+# to the EHR always use its vocabulary. wired=true marks the seven pathways
+# with full requirement checklists and automation in this wave.
+
+pathways:
+  - id: 1
+    key: home_self_care
+    name: Home / self-care
+    ehr_disposition: home
+    wired: true
+    requirements:
+      - Is the patient independent with ADLs and mobility (or back to baseline)?
+      - Can the patient manage their own medications after discharge?
+      - Is there a safe, stable home to return to?
+      - Is follow-up (PCP or specialty) arranged within the required window?
+      - Are discharge prescriptions ready and affordable for the patient?
+      - Does the patient have transport home?
+
+  - id: 2
+    key: home_family_caregiver
+    name: Home with family caregiver
+    ehr_disposition: home
+    wired: true
+    requirements:
+      - Is a specific family caregiver identified and willing?
+      - Is the caregiver available for the hours of support the patient needs?
+      - Has the caregiver been trained on required care (meds, transfers, wound care)?
+      - Is the home physically suitable (stairs, bathroom access, bed setup)?
+      - Is any needed DME ordered and deliverable before or at discharge?
+      - Is follow-up scheduled and does the family know the return precautions?
+
+  - id: 3
+    key: home_private_caregiver
+    name: Home with private-duty caregiver
+    ehr_disposition: home_with_services
+    wired: false
+    requirements: []
+
+  - id: 4
+    key: home_health
+    name: Home health (nursing / PT / OT / SLP)
+    ehr_disposition: home_with_services
+    wired: true
+    requirements:
+      - Is the patient homebound (or does the payer waive that requirement)?
+      - Which skilled services are needed — nursing, PT, OT, SLP, aide?
+      - Is there a home health order signed by the physician?
+      - Has an agency accepted the referral and confirmed a start-of-care date?
+      - Does insurance cover the prescribed home health services?
+      - Is any DME (walker, commode, hospital bed, oxygen) ordered for the home?
+      - Is a caregiver or the patient able to manage between visits?
+
+  - id: 5
+    key: home_complex_services
+    name: Home with complex medical services
+    ehr_disposition: home_with_services
+    wired: false
+    requirements: []
+
+  - id: 6
+    key: sequoia_internal
+    name: Sequoia (Stanford alternative care center, internal transfer)
+    ehr_disposition: snf
+    wired: false
+    requirements: []
+
+  - id: 7
+    key: home_hospice
+    name: Home hospice
+    ehr_disposition: hospice_home
+    wired: false
+    requirements: []
+
+  - id: 8
+    key: assisted_living
+    name: Assisted living / memory care / board-and-care
+    ehr_disposition: assisted_living
+    wired: true
+    requirements:
+      - What level of ADL support does the patient need (bathing, dressing, meds)?
+      - Does the patient have cognitive impairment requiring memory care / secured unit?
+      - Can the patient self-transfer or ambulate with standby assist (non-two-person)?
+      - How will the stay be paid — private pay, LTC insurance, Medicaid waiver?
+      - Has a facility accepted after reviewing the clinical picture?
+      - Are behaviors (exit-seeking, aggression) within what the facility manages?
+      - Is medication management set up (facility med pass vs self-administration)?
+
+  - id: 9
+    key: return_existing_al
+    name: Return to existing assisted-living / group home
+    ehr_disposition: assisted_living
+    wired: false
+    requirements: []
+
+  - id: 10
+    key: ltc_custodial
+    name: Long-term custodial nursing facility
+    ehr_disposition: snf
+    wired: false
+    requirements: []
+
+  - id: 11
+    key: snf
+    name: SNF / subacute / TCU
+    ehr_disposition: snf
+    wired: true
+    requirements:
+      - What skilled nursing or therapy needs justify SNF level of care?
+      - Does the patient need IV therapy, and can the facility administer it?
+      - Are there wounds or a wound VAC the facility must manage?
+      - Does the patient need dialysis, and is there a chair/transport arrangement?
+      - Is the patient on oxygen or other respiratory support the facility accepts?
+      - Does the patient require isolation precautions (COVID, MDRO)?
+      - Are there behavioral issues (sundowning, aggression) the facility can handle?
+      - What is the expected length of stay and payer authorization for it?
+
+  - id: 12
+    key: irf
+    name: IRF / acute rehab
+    ehr_disposition: inpatient_rehab
+    wired: true
+    requirements:
+      - Can the patient tolerate 3 hours of therapy per day, 5 days a week?
+      - Does the patient need at least two therapy disciplines (PT/OT/SLP)?
+      - Is there a rehab diagnosis that qualifies (stroke, brain injury, amputation...)?
+      - Has a PM&R physician evaluated and recommended IRF level of care?
+      - Is the patient medically stable enough for an intensive rehab program?
+      - Has the payer authorized the IRF admission?
+      - Is there an accepting IRF with a bed?
+
+  - id: 13
+    key: ltach
+    name: LTACH
+    ehr_disposition: ltac
+    wired: false
+    requirements: []
+
+  - id: 14
+    key: inpatient_hospice
+    name: Inpatient hospice / hospice facility
+    ehr_disposition: hospice_facility
+    wired: true
+    requirements:
+      - Has the patient/surrogate elected hospice (comfort-focused goals of care)?
+      - Is there a physician certification of terminal prognosis (6 months or less)?
+      - Does the patient meet general inpatient (GIP) criteria — uncontrolled symptoms?
+      - Is code status documented consistent with hospice (DNR/comfort)?
+      - Has a hospice agency accepted and is a facility bed available?
+      - Is the family aligned with the plan and informed of logistics?
+
+  - id: 15
+    key: hospice_at_snf
+    name: Hospice at SNF / residential
+    ehr_disposition: hospice_facility
+    wired: false
+    requirements: []
+
+  - id: 16
+    key: acute_transfer
+    name: Transfer to another acute-care hospital
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 17
+    key: repatriate_originating
+    name: Transfer back to originating hospital
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 18
+    key: inpatient_psych
+    name: Inpatient psychiatric
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 19
+    key: detox_sud
+    name: Detox / residential SUD treatment
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 20
+    key: residential_behavioral
+    name: Residential psych / eating-disorder / behavioral
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 21
+    key: group_home
+    name: Group home / supported residential
+    ehr_disposition: assisted_living
+    wired: false
+    requirements: []
+
+  - id: 22
+    key: medical_respite
+    name: Medical respite / recuperative care
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 23
+    key: shelter
+    name: Shelter / transitional housing
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 24
+    key: correctional
+    name: Correctional facility
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
+
+  - id: 25
+    key: repatriation
+    name: Out-of-state / international repatriation
+    ehr_disposition: undetermined
+    wired: false
+    requirements: []
