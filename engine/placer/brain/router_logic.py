@@ -122,6 +122,14 @@ def decode_payload(task: DispoTask) -> dict:
         return {}
 
 
+def _looks_like_lab(btype: str) -> bool:
+    """Tolerant match for lab/test-flavored barrier types — the GPS names
+    barriers descriptively (e.g. 'covid_test_required'), so the router keys on
+    keywords, not exact vocabulary."""
+    tokens = set((btype or "").lower().replace("-", "_").split("_"))
+    return bool(tokens & {"lab", "labs", "test", "testing", "pcr", "screen", "screening", "culture", "panel"})
+
+
 def _slug(text: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in (text or "-").lower())[:40] or "-"
 
@@ -155,6 +163,17 @@ def build_plan(session: Session, case: Case, barriers: list, active_pathways: li
 
         if b.btype == "bed_availability" or b.dimension == "destination":
             saw_destination = True  # handled below via the facility pipeline
+            # A destination-gating screening test (e.g. "SNF requires negative
+            # COVID PCR") also needs the lab actually pended — catalog CED-044.
+            if _looks_like_lab(b.btype):
+                display = b.description or b.btype.replace("_", " ")
+                specs.append(TaskSpec(
+                    task_type="draft_order", mode="auto", action_id="CED-044",
+                    title=f"Draft facility screening order: {display[:48]}",
+                    target=_slug(b.btype),
+                    payload={"order_type": "lab", "display": display, "detail": b.evidence},
+                    pathway_ids=tags, barrier_id=b.id,
+                ))
 
         elif b.btype == "family_decision" or (b.dimension == "decision" and b.btype == "preference"):
             topics = [b.description or "discharge preferences"]
@@ -166,7 +185,7 @@ def build_plan(session: Session, case: Case, barriers: list, active_pathways: li
                 pathway_ids=tags, barrier_id=b.id,
             ))
 
-        elif b.btype == "pending_lab" and b.dimension == "clinical_docs":
+        elif b.dimension == "clinical_docs" and _looks_like_lab(b.btype):
             display = b.description or "lab panel"
             specs.append(TaskSpec(
                 task_type="draft_order", mode="auto", action_id="CED-031",
@@ -176,7 +195,7 @@ def build_plan(session: Session, case: Case, barriers: list, active_pathways: li
                 pathway_ids=tags, barrier_id=b.id,
             ))
 
-        elif b.btype == "consult_needed" and b.dimension == "clinical_docs":
+        elif b.dimension == "clinical_docs" and ("consult" in b.btype or "eval" in b.btype):
             consult = b.description or "consult"
             specs.append(TaskSpec(
                 task_type="draft_consult", mode="auto", action_id="CED-013",
