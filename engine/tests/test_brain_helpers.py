@@ -14,14 +14,22 @@ import types
 class FakeEHR:
     """Minimal EHRClient stand-in recording writes."""
 
-    def __init__(self, chart=None, admitted=None, events=None):
+    def __init__(self, chart=None, admitted=None, events=None, notes=None, labs=None):
         self.chart = chart or {"patient": {"id": "p1", "name": "Test Patient"}, "problems": []}
         self.admitted = admitted or []
         self.events = events or []
+        self.notes = notes or []
+        self.labs = labs or []
         self.assessments: list = []
 
     def get_chart(self, patient_id):
         return self.chart
+
+    def list_notes(self, patient_id, note_type=None):
+        return self.notes
+
+    def list_labs(self, patient_id, status=None):
+        return self.labs
 
     def post_dispo_assessment(self, **kwargs):
         self.assessments.append(kwargs)

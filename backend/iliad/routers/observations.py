@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import DiagnosticReport, Observation, Patient
 from ..models.base import new_id, utcnow
 from ..schemas import LabResultUpdate, ObservationCreate
@@ -23,6 +24,30 @@ router = APIRouter(tags=["observations"])
 
 # Agent-friendly aliases -> stored status values.
 _LAB_STATUS_ALIASES = {"resulted": "final", "final": "final", "pending": "pending", "cancelled": "cancelled"}
+
+
+def _lab_resulted_event(session: Session, obs: Observation, actor: str) -> None:
+    """Announce a completed lab result on the event feed so the Placer engine
+    reacts to it. Only *final* laboratory results are material — pending orders
+    and routine vitals stay off the feed to keep it signal-dense. A normal
+    result matters too (it can clear a barrier), so we do not gate on abnormal."""
+    if obs.category != "laboratory" or obs.status != "final":
+        return
+    record_event(
+        session,
+        "observation.resulted",
+        patient_id=obs.patient_id,
+        actor=actor,
+        entity_type="observation",
+        entity_id=obs.id,
+        payload={
+            "display": obs.display,
+            "value_num": obs.value_num,
+            "value_unit": obs.value_unit,
+            "value_string": obs.value_string,
+            "abnormal_flag": obs.abnormal_flag,
+        },
+    )
 
 
 @router.get("/patients/{patient_id}/vitals", summary="List a patient's vitals")
@@ -78,7 +103,11 @@ def get_observation(observation_id: str, session: Session = Depends(get_session)
 
 
 @router.post("/observations", status_code=201, summary="Record an observation (vital or lab)", tags=["observations"])
-def create_observation(body: ObservationCreate, session: Session = Depends(get_session)) -> dict:
+def create_observation(
+    body: ObservationCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     obs = Observation(
         id=new_id(),
         patient_id=body.patient_id,
@@ -93,6 +122,7 @@ def create_observation(body: ObservationCreate, session: Session = Depends(get_s
         effective_time=utcnow(),
     )
     session.add(obs)
+    _lab_resulted_event(session, obs, actor)  # only fires for a final laboratory result
     session.commit()
     session.refresh(obs)
     return serialize(obs)
@@ -104,7 +134,12 @@ def create_observation(body: ObservationCreate, session: Session = Depends(get_s
     description="Sets a pending lab's value and marks it final. Also completes the ordering Order if one is linked.",
     tags=["observations"],
 )
-def result_lab(observation_id: str, body: LabResultUpdate, session: Session = Depends(get_session)) -> dict:
+def result_lab(
+    observation_id: str,
+    body: LabResultUpdate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     from ..models import Order
 
     obs = get_or_404(session, Observation, observation_id, "Observation")
@@ -117,6 +152,7 @@ def result_lab(observation_id: str, body: LabResultUpdate, session: Session = De
     obs.issued_time = now
     obs.updated_at = now
     session.add(obs)
+    _lab_resulted_event(session, obs, actor)  # tell the engine a result landed
 
     # Complete a linked order, if any.
     order = session.exec(select(Order).where(Order.result_observation_id == observation_id)).first()
