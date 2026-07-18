@@ -8,7 +8,6 @@ import { patientDisplayName } from "../lib/format";
 import { errorMessage, useToast } from "../lib/toast";
 import { Modal } from "../components/Modal";
 import { Field, FormGrid, Select, TextInput } from "../components/form";
-import { humanize } from "../lib/enums";
 
 const LIVING_SITUATION_OPTIONS = [
   { value: "lives_alone", label: "Lives alone" },
@@ -83,7 +82,6 @@ export default function PatientsPage() {
                 <Th>Age</Th>
                 <Th>Gender</Th>
                 <Th>Location</Th>
-                <Th>Living situation</Th>
                 <Th>Code status</Th>
               </tr>
             </thead>
@@ -95,7 +93,6 @@ export default function PatientsPage() {
                   <Td>{p.age ?? "—"}</Td>
                   <Td className="capitalize">{p.gender ?? "—"}</Td>
                   <Td>{[p.city, p.state].filter(Boolean).join(", ") || "—"}</Td>
-                  <Td>{p.living_situation ? humanize(p.living_situation) : "—"}</Td>
                   <Td>{p.code_status ? <Badge>{p.code_status}</Badge> : "—"}</Td>
                 </Tr>
               ))}

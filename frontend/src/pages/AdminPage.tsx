@@ -42,7 +42,7 @@ export default function AdminPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Reset database" subtitle="Drops all data and reseeds the fixed seed set (4 hero patients + facilities)" />
+            <CardHeader title="Reset database" subtitle="Drops all data and reseeds the fixed demo seed set" />
             <div className="flex flex-col gap-3 px-4 py-3">
               <Button variant="danger" size="sm" loading={resetMutation.isPending} onClick={() => resetMutation.mutate()} className="self-start">
                 <RotateCcw size={13} /> Reset to seed state

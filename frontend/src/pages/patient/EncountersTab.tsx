@@ -7,7 +7,7 @@ import { Badge, Button, CenteredSpinner, EmptyState, ErrorState, Table, Td, Th, 
 import { Field, FormGrid, Select, TextInput } from "../../components/form";
 import { Modal } from "../../components/Modal";
 import { formatDate, statusVariant } from "../../lib/format";
-import { LABELS, ENCOUNTER_CLASS, ENCOUNTER_STATUS, DISPOSITION_STATUS, DISPOSITION_TYPE } from "../../lib/enums";
+import { LABELS, ENCOUNTER_CLASS, ENCOUNTER_STATUS } from "../../lib/enums";
 import { errorMessage, useToast } from "../../lib/toast";
 import type { Encounter } from "../../lib/types";
 
@@ -41,8 +41,6 @@ export default function EncountersTab() {
               <Th>Status</Th>
               <Th>Start</Th>
               <Th>End</Th>
-              <Th>Dispo status</Th>
-              <Th>Planned dispo</Th>
               <Th />
             </tr>
           </thead>
@@ -54,8 +52,6 @@ export default function EncountersTab() {
                 <Td><Badge variant={statusVariant(e.status)}>{LABELS.encounterStatus[e.status] ?? e.status}</Badge></Td>
                 <Td>{formatDate(e.period_start)}</Td>
                 <Td>{formatDate(e.period_end)}</Td>
-                <Td><Badge variant={statusVariant(e.disposition_status)}>{LABELS.dispositionStatus[e.disposition_status] ?? e.disposition_status}</Badge></Td>
-                <Td>{e.planned_disposition ? LABELS.dispositionType[e.planned_disposition] ?? e.planned_disposition : "—"}</Td>
                 <Td>
                   <Button size="sm" variant="ghost" onClick={() => setEditing(e)}>Edit</Button>
                 </Td>
@@ -132,16 +128,12 @@ function EditEncounterModal({ encounter, onClose }: { encounter: Encounter; onCl
   const qc = useQueryClient();
   const toast = useToast();
   const [status, setStatus] = useState(encounter.status);
-  const [dispositionStatus, setDispositionStatus] = useState(encounter.disposition_status);
-  const [plannedDisposition, setPlannedDisposition] = useState(encounter.planned_disposition ?? "");
   const [discharge, setDischarge] = useState(false);
 
   const mutation = useMutation({
     mutationFn: () =>
       encountersApi.update(encounter.id, {
         status,
-        disposition_status: dispositionStatus,
-        planned_disposition: plannedDisposition || undefined,
         ...(discharge ? { period_end: new Date().toISOString() } : {}),
       }),
     onSuccess: () => {
@@ -158,12 +150,6 @@ function EditEncounterModal({ encounter, onClose }: { encounter: Encounter; onCl
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); mutation.mutate(); }}>
         <Field label="Status">
           <Select options={ENCOUNTER_STATUS} value={status} onChange={(e) => setStatus(e.target.value)} />
-        </Field>
-        <Field label="Disposition status">
-          <Select options={DISPOSITION_STATUS} value={dispositionStatus} onChange={(e) => setDispositionStatus(e.target.value)} />
-        </Field>
-        <Field label="Planned disposition">
-          <Select options={DISPOSITION_TYPE} placeholder="Not yet decided" value={plannedDisposition} onChange={(e) => setPlannedDisposition(e.target.value)} />
         </Field>
         {!encounter.period_end && (
           <label className="flex items-center gap-2 text-[12.5px] text-text">

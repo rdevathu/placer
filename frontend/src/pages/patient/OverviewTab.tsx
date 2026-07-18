@@ -1,12 +1,12 @@
 import { Link } from "react-router-dom";
 import { usePatientChart } from "../PatientDetailPage";
 import { Badge, Card, CardHeader, EmptyState, Kv } from "../../components/ui";
-import { formatDate, statusVariant, priorityVariant, abnormalVariant } from "../../lib/format";
+import { formatDate, statusVariant, abnormalVariant } from "../../lib/format";
 import { humanize } from "../../lib/enums";
 
 export default function OverviewTab() {
   const { patientId, chart } = usePatientChart();
-  const { patient, active_problems, medications, latest_vitals, pending_labs, abnormal_labs, open_care_tasks, open_orders } = chart;
+  const { patient, active_problems, medications, latest_vitals, pending_labs, abnormal_labs, open_orders } = chart;
 
   const cityStateZip = [[patient.city, patient.state].filter(Boolean).join(", "), patient.postal_code]
     .filter(Boolean)
@@ -29,7 +29,6 @@ export default function OverviewTab() {
           <Kv label="Phone" value={patient.phone} />
           <Kv label="Address" value={address} />
           <Kv label="Emergency contact" value={emergencyContact} />
-          <Kv label="Living situation" value={patient.living_situation ? humanize(patient.living_situation) : null} />
           <Kv label="Code status" value={patient.code_status} />
         </div>
       </Card>
@@ -112,29 +111,8 @@ export default function OverviewTab() {
         )}
       </Card>
 
-      <Card>
-        <CardHeader title="Open care tasks" subtitle={`${open_care_tasks.length} open`} action={<Link to={`/patients/${patientId}/placer`} className="text-[11.5px] text-accent hover:underline">View all →</Link>} />
-        {open_care_tasks.length === 0 ? (
-          <EmptyState title="No open tasks" />
-        ) : (
-          <div className="divide-y divide-border px-4">
-            {open_care_tasks.map((t) => (
-              <Kv
-                key={t.id}
-                label={t.title}
-                value={
-                  <span className="flex items-center justify-end gap-1.5">
-                    <Badge variant={priorityVariant(t.priority)}>{t.priority}</Badge>
-                    <Badge variant={statusVariant(t.status)}>{humanize(t.status)}</Badge>
-                  </span>
-                }
-              />
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card>
+      {/* col-span-2 keeps the 2-col grid even now that the card count is odd. */}
+      <Card className="col-span-2">
         <CardHeader title="Open orders" subtitle={`${open_orders.length} open`} action={<Link to={`/patients/${patientId}/orders`} className="text-[11.5px] text-accent hover:underline">View all →</Link>} />
         {open_orders.length === 0 ? (
           <EmptyState title="No open orders" />

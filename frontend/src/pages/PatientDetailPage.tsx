@@ -32,7 +32,7 @@ export default function PatientDetailPage() {
   if (isLoading) return <CenteredSpinner />;
   if (isError || !chart) return <ErrorState message={errorMessage(error)} />;
 
-  const { patient, active_encounter, current_disposition } = chart;
+  const { patient, active_encounter } = chart;
 
   const tabs = [
     { to: `/patients/${id}`, label: "Overview", end: true },
@@ -63,17 +63,6 @@ export default function PatientDetailPage() {
           {active_encounter && (
             <Badge variant="accent">
               {LABELS.encounterStatus[active_encounter.status] ?? active_encounter.status}
-            </Badge>
-          )}
-          {active_encounter?.disposition_status && (
-            <Badge variant="neutral">
-              Dispo: {LABELS.dispositionStatus[active_encounter.disposition_status] ?? active_encounter.disposition_status}
-            </Badge>
-          )}
-          {current_disposition && (
-            <Badge variant="success">
-              Predicted: {LABELS.dispositionType[current_disposition.predicted_disposition] ?? current_disposition.predicted_disposition}
-              {current_disposition.confidence != null ? ` (${Math.round(current_disposition.confidence * 100)}%)` : ""}
             </Badge>
           )}
           {patient.code_status && <Badge variant="warning">{patient.code_status}</Badge>}
