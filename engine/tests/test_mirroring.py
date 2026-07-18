@@ -19,6 +19,7 @@ from sqlmodel import select
 from placer import config
 from placer.api import chat as chat_mod
 from placer.brain import loop, router_logic
+from placer.brain.respond import TeamReply
 from placer.models import Case, ChatMessage, DispoTask
 
 
@@ -84,15 +85,24 @@ def _provider_event(patient_id="hero-a-stroke", sender="provider"):
     }
 
 
-def test_provider_message_routes_to_chat_facts_dirty(session):
+def test_provider_message_routes_to_chat_reply_facts_dirty(session, monkeypatch):
+    import placer.llm
+
+    monkeypatch.setattr(placer.llm, "structured", lambda prompt, schema, **kw: TeamReply(
+        reply="Noted — rehab preference recorded; IRF is the current leader.",
+        action_kind="none", detail=""))
     case = _case(session)
     loop._route_event(session, _provider_event())
     session.commit()
 
-    msg = session.exec(select(ChatMessage).where(ChatMessage.case_id == case.id)).first()
-    assert msg is not None
-    assert msg.author == "team:Dr. Feld"
-    assert msg.content == "Family prefers rehab"
+    msgs = session.exec(select(ChatMessage).where(ChatMessage.case_id == case.id)
+                        .order_by(ChatMessage.created_at)).all()
+    assert msgs[0].author == "team:Dr. Feld"
+    assert msgs[0].content == "Family prefers rehab"
+    # The responder answered in-thread as placer (mirrored out; the echo comes
+    # back with sender='placer' and is skipped — no loop).
+    assert msgs[1].author == "placer"
+    assert "rehab preference" in msgs[1].content
 
     session.refresh(case)
     notes = case.facts["team_notes"]
@@ -174,6 +184,66 @@ def test_persist_plan_mirrors_care_task_and_stores_id(session, recorder):
     assert json.loads(task.detail)["ehr_care_task_id"] == "ct-1"
     # Original payload keys survive the rewrite.
     assert json.loads(task.detail)["topics"] == ["prefs"]
+
+
+def test_executor_parks_waiting_tasks_truthfully(session, monkeypatch):
+    """A waiting_on result -> status 'waiting', ONE chat note, case NOT
+    dirtied, and the task is never re-picked on later ticks."""
+    case = _case(session)
+    task = DispoTask(
+        case_id=case.id, task_type="facility_intake_call", mode="approval", status="approved",
+        title="Facility intake call: Sunny Acres", detail=json.dumps({"referral_id": "r1"}),
+    )
+    session.add(task)
+    session.commit()
+
+    runs = []
+
+    def fake_run_task(session_, task_):
+        runs.append(task_.id)
+        return {"waiting_on": "telephony",
+                "note": "Real call required — calling is not yet enabled (Bland integration pending)"}
+
+    fake_workers = types.ModuleType("placer.workers")
+    fake_workers.run_task = fake_run_task
+    monkeypatch.setitem(sys.modules, "placer.workers", fake_workers)
+
+    loop._execute_tasks(session, ehr=None)
+    session.refresh(task)
+    assert task.status == "waiting"
+    assert task.result["waiting_on"] == "telephony"
+    session.refresh(case)
+    assert case.dirty is False  # nothing changed — no reassessment churn
+
+    notes = session.exec(select(ChatMessage).where(ChatMessage.case_id == case.id)).all()
+    assert len(notes) == 1
+    assert "Waiting on telephony" in notes[0].content
+    assert "Sunny Acres" in notes[0].content
+    assert "not yet enabled" in notes[0].content
+
+    # Waiting tasks are never re-picked: no new run, no second chat note.
+    loop._execute_tasks(session, ehr=None)
+    assert runs == [task.id]
+    assert len(session.exec(select(ChatMessage).where(ChatMessage.case_id == case.id)).all()) == 1
+
+
+def test_executor_skips_loop_note_when_worker_already_posted(session, monkeypatch):
+    case = _case(session)
+    task = DispoTask(case_id=case.id, task_type="verify_benefits", mode="auto",
+                     status="pending", title="Verify benefits")
+    session.add(task)
+    session.commit()
+
+    fake_workers = types.ModuleType("placer.workers")
+    fake_workers.run_task = lambda s, t: {"waiting_on": "team", "note": "needs a human",
+                                          "chat_posted": True}
+    monkeypatch.setitem(sys.modules, "placer.workers", fake_workers)
+
+    loop._execute_tasks(session, ehr=None)
+    session.refresh(task)
+    assert task.status == "waiting"
+    # The worker already posted its ONE note; the loop must not add another.
+    assert session.exec(select(ChatMessage).where(ChatMessage.case_id == case.id)).all() == []
 
 
 def test_executor_mirrors_completion(session, recorder, monkeypatch):

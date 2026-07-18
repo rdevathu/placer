@@ -49,10 +49,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Open CORS — local demo service consumed by a frontend on another port.
+# CORS — the Iliad frontend (Placer tab) calls the engine directly from the
+# browser during local dev.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

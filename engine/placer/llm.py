@@ -60,9 +60,8 @@ def complete(
     model: Optional[str] = None,
     max_tokens: int = 1024,
 ) -> str:
-    """Plain text turn for conversational simulation (e.g. the simulated
-    admissions desk on the other end of a 'call'). ``messages`` is a standard
-    Messages API list.
+    """Plain text turn for multi-turn conversational use. ``messages`` is a
+    standard Messages API list.
     """
     client = _get_client()
     kwargs: dict = {

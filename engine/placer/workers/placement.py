@@ -29,7 +29,7 @@ from .common import (
     guard_referral,
     notify,
     record_decline,
-    short_ref,
+    telephony_waiting,
 )
 
 # Wired placement pathways -> the EHR facility_type vocabulary.
@@ -178,7 +178,11 @@ def build_shortlist(session: Session, task, ehr, worker: str) -> dict:
 
 def facility_intake_call(session: Session, task, ehr, worker: str) -> dict:
     """payload {referral_id}: verify intake route/hours/capacity by phone.
-    shortlisted -> intake_verified, or declined ('no_bed') on a hard zero."""
+    shortlisted -> intake_verified, or declined ('no_bed') on a hard zero.
+    Without telephony the task parks as waiting — nothing is written."""
+    waiting = telephony_waiting()
+    if waiting is not None:
+        return waiting
     referral = get_referral(session, task)
     guard_referral(referral, {"shortlisted", "intake_verified"}, "facility_intake_call")
     case = get_case(session, referral.case_id)
@@ -224,7 +228,10 @@ def facility_intake_call(session: Session, task, ehr, worker: str) -> dict:
 def facility_screen_call(session: Session, task, ehr, worker: str) -> dict:
     """payload {referral_id}: run the pathway's requirement checklist against
     the facility. intake_verified -> screened | conditional | declined
-    (categorized denial_reason)."""
+    (categorized denial_reason). Without telephony the task parks as waiting."""
+    waiting = telephony_waiting()
+    if waiting is not None:
+        return waiting
     referral = get_referral(session, task)
     guard_referral(referral, {"intake_verified", "shortlisted"}, "facility_screen_call")
     case = get_case(session, referral.case_id)
@@ -279,40 +286,29 @@ def facility_screen_call(session: Session, task, ehr, worker: str) -> dict:
 
 
 def submit_referral(session: Session, task, ehr, worker: str) -> dict:
-    """payload {referral_id}: simulated portal submission. screened ->
-    submitted -> pending decision, with a confirmation number in notes."""
+    """payload {referral_id}: real portal submission — not yet integrated.
+
+    No fake portal, no invented confirmation numbers: the task parks as
+    waiting and the referral status is left untouched until a real submission
+    channel exists."""
     referral = get_referral(session, task)
     if referral.status in ("submitted", "pending"):
         return {"referral_id": referral.id, "status": referral.status, "note": "already submitted"}
-    guard_referral(referral, {"screened", "conditional"}, "submit_referral")
-    case = get_case(session, referral.case_id)
-
-    confirmation = short_ref("REF")
-    referral.status = "pending"
-    append_note(referral, f"Submitted via portal; confirmation {confirmation}")
-    session.add(referral)
-
-    ehr.create_communication(
-        patient_id=case.patient_id,
-        summary=f"Referral packet submitted to {referral.facility_name} (confirmation {confirmation})",
-        party_type="facility",
-        party_name=referral.facility_name,
-        outcome="submitted",
-        facility_id=referral.facility_id,
-        modality="portal",
-    )
-    notify(
-        session,
-        case.id,
-        f"{worker}: referral submitted to {referral.facility_name} (confirmation {confirmation}) — awaiting decision",
-    )
-    return {"referral_id": referral.id, "status": "pending", "confirmation": confirmation}
+    return {
+        "waiting_on": "referral_portal",
+        "note": "Real submission required — referral portal integration pending",
+        "referral_id": referral.id,
+        "facility_name": referral.facility_name,
+    }
 
 
 def finalize_acceptance(session: Session, task, ehr, worker: str) -> dict:
     """payload {referral_id}: confirmation call for the final decision.
     pending/conditional -> accepted (48h bed hold + destination barrier cleared)
-    or declined (categorized)."""
+    or declined (categorized). Without telephony the task parks as waiting."""
+    waiting = telephony_waiting()
+    if waiting is not None:
+        return waiting
     referral = get_referral(session, task)
     guard_referral(referral, {"pending", "conditional", "submitted"}, "finalize_acceptance")
     case = get_case(session, referral.case_id)

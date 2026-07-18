@@ -144,3 +144,81 @@ def test_reassessment_is_idempotent(session, monkeypatch):
     batches = session.exec(select(Approval).where(
         Approval.case_id == case.id, Approval.kind == "batch", Approval.status == "pending")).all()
     assert len(batches) == 1
+
+
+# ---------------------------------------------------------------------------
+# EHR assessment-posting gate: no dispo_assessments spam
+# ---------------------------------------------------------------------------
+
+
+def _assessment(leader_conf=0.5, leader_id=11, other_conf=0.45, other_id=4):
+    a = _fifty_fifty_assessment()
+    a.distribution = [PathwayScore(pathway_id=leader_id, confidence=leader_conf),
+                      PathwayScore(pathway_id=other_id, confidence=other_conf)]
+    return a
+
+
+def test_same_leader_same_confidence_posts_once(session, monkeypatch):
+    install_stubs(monkeypatch)
+    stub_gps(monkeypatch, _assessment())
+    case = _seed_case(session)
+    ehr = FakeEHR()
+
+    pipeline.run_assessment(session, case, ehr)
+    assert len(ehr.assessments) == 1  # first assessment always posts
+    lp = case.facts["last_posted_assessment"]
+    assert lp == {"pathway_id": 11, "confidence": 0.5, "state": "predicted"}
+
+    pipeline.run_assessment(session, case, ehr)
+    pipeline.run_assessment(session, case, ehr)
+    assert len(ehr.assessments) == 1  # nothing moved — no new EHR rows
+
+
+def test_small_confidence_drift_does_not_post(session, monkeypatch):
+    install_stubs(monkeypatch)
+    stub_gps(monkeypatch, _assessment(leader_conf=0.5))
+    case = _seed_case(session)
+    ehr = FakeEHR()
+    pipeline.run_assessment(session, case, ehr)
+
+    stub_gps(monkeypatch, _assessment(leader_conf=0.55))  # +0.05 < 0.10
+    pipeline.run_assessment(session, case, ehr)
+    assert len(ehr.assessments) == 1
+    assert case.facts["last_posted_assessment"]["confidence"] == 0.5  # unchanged
+
+
+def test_confidence_jump_posts_again(session, monkeypatch):
+    install_stubs(monkeypatch)
+    stub_gps(monkeypatch, _assessment(leader_conf=0.5))
+    case = _seed_case(session)
+    ehr = FakeEHR()
+    pipeline.run_assessment(session, case, ehr)
+
+    stub_gps(monkeypatch, _assessment(leader_conf=0.65))  # +0.15 >= 0.10
+    pipeline.run_assessment(session, case, ehr)
+    assert len(ehr.assessments) == 2
+    assert case.facts["last_posted_assessment"]["confidence"] == 0.65
+
+
+def test_leader_change_posts_and_refreshes_commit_card(session, monkeypatch):
+    chat_log = install_stubs(monkeypatch)
+    stub_gps(monkeypatch, _assessment(leader_conf=0.5, leader_id=11))
+    case = _seed_case(session)
+    ehr = FakeEHR()
+    pipeline.run_assessment(session, case, ehr)
+    cards_before = sum(1 for m in chat_log if m["kind"] == "approval_card")
+
+    # Same leader again: the commit card must NOT churn.
+    pipeline.run_assessment(session, case, ehr)
+    assert sum(1 for m in chat_log if m["kind"] == "approval_card") == cards_before
+
+    # Leader flips to home health: new EHR post AND the card is refreshed once.
+    stub_gps(monkeypatch, _assessment(leader_conf=0.6, leader_id=4, other_conf=0.35, other_id=11))
+    pipeline.run_assessment(session, case, ehr)
+    assert len(ehr.assessments) == 2
+    assert ehr.assessments[-1]["predicted_disposition"] == "home_with_services"
+    assert case.facts["last_posted_assessment"]["pathway_id"] == 4
+    batch = session.exec(select(Approval).where(
+        Approval.case_id == case.id, Approval.kind == "batch", Approval.status == "pending")).one()
+    assert batch.task_ids["pathway_id"] == 4
+    assert sum(1 for m in chat_log if m["kind"] == "approval_card") == cards_before + 1

@@ -19,11 +19,13 @@ DATABASE_URL = os.environ.get("PLACER_DATABASE_URL", f"sqlite:///{DB_PATH}")
 # The dummy EHR this engine reads from and acts on.
 EHR_BASE_URL = os.environ.get("EHR_BASE_URL", "http://localhost:8000")
 
-# Model used by later (LLM) waves. Unused in the skeleton.
-MODEL = os.environ.get("PLACER_MODEL", "claude-opus-4-8")
+# Model for all LLM calls (GPS, watchman, chat responder). Cheap by default.
+MODEL = os.environ.get("PLACER_MODEL", "claude-sonnet-5")
 
-# How outbound calls are made: 'simulated' (scripted, offline) or 'twilio'.
-CALL_MODE = os.environ.get("CALL_MODE", "simulated")
+# How outbound calls are made: 'disabled' (no telephony — workers park as
+# waiting) or 'bland' (Bland AI, integration pending). There is deliberately
+# no simulation mode: Placer never fabricates a call outcome.
+CALL_MODE = os.environ.get("CALL_MODE", "disabled")
 
 # Cadence / thresholds for the engine loop.
 HEARTBEAT_HOURS = int(os.environ.get("HEARTBEAT_HOURS", "24"))

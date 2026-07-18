@@ -26,6 +26,21 @@ CLEARABLE_DIMENSIONS = {"destination", "payer", "transport"}
 _OPEN_STATUSES = ("open", "in_progress", "blocked")
 
 
+def telephony_waiting() -> Optional[dict]:
+    """None when a real call can be placed; otherwise the truthful waiting
+    result every external-contact worker returns. Checked upfront (before any
+    writes) so a parked task leaves no communication, referral advancement,
+    facility update, or barrier change behind."""
+    from .. import config
+
+    if config.CALL_MODE == "disabled":
+        return {
+            "waiting_on": "telephony",
+            "note": "Real call required — calling is not yet enabled (Bland integration pending)",
+        }
+    return None
+
+
 def notify(session: Session, case_id: Optional[str], text: str) -> None:
     """One-line chat notification. Lazy import: placer.api.chat is owned by a
     parallel wave and may not exist while workers are developed; tests stub it."""

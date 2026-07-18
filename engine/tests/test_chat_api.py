@@ -1,13 +1,11 @@
 """End-to-end tests for the chat/board API (placer/api/chat.py).
 
-Offline: ``placer.llm.structured`` is monkeypatched, and ``placer.brain.actions``
-is a fake module injected into sys.modules (the real brain lands in parallel;
-chat imports it lazily inside endpoint bodies).
-"""
+Offline: ``placer.llm.structured`` is monkeypatched (the responder seam), and
+``placer.brain.actions`` is a fake module injected into sys.modules (chat
+imports it lazily inside endpoint bodies)."""
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import types
@@ -21,7 +19,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from sqlmodel import Session, select  # noqa: E402
 
 from placer import llm as llm_mod  # noqa: E402
-from placer.api.chat import IntakeParse, post_message  # noqa: E402
+from placer.api.chat import post_message  # noqa: E402
+from placer.brain.respond import TeamReply  # noqa: E402
 from placer.db import engine  # noqa: E402
 from placer.models import Approval, Barrier, Case, ChatMessage, DispoTask, Referral  # noqa: E402
 
@@ -72,22 +71,30 @@ def brain(monkeypatch):
     actions.reject_approval = reject_approval
     actions.reassess_case = reassess_case
 
-    pkg = types.ModuleType("placer.brain")
-    pkg.actions = actions
-    monkeypatch.setitem(sys.modules, "placer.brain", pkg)
+    # The real placer.brain package stays importable (respond_to_team lives
+    # there); only the actions seam is faked.
     monkeypatch.setitem(sys.modules, "placer.brain.actions", actions)
     return calls
 
 
 @pytest.fixture()
-def intake(monkeypatch):
-    """Monkeypatchable llm.structured returning a canned IntakeParse."""
-    holder = {"kind": "info", "summary": "noted", "raise": False}
+def responder(monkeypatch):
+    """Monkeypatchable llm.structured returning a canned TeamReply."""
+    holder = {
+        "reply": "Two open barriers: SNF bed not secured; benefits unverified.",
+        "action_kind": "none",
+        "detail": "",
+        "raise": False,
+        "prompts": [],
+    }
 
     def fake_structured(prompt, schema, **kwargs):
+        holder["prompts"].append(prompt)
         if holder["raise"]:
             raise RuntimeError("model down")
-        return IntakeParse(kind=holder["kind"], summary=holder["summary"])
+        return TeamReply(
+            reply=holder["reply"], action_kind=holder["action_kind"], detail=holder["detail"]
+        )
 
     monkeypatch.setattr(llm_mod, "structured", fake_structured)
     return holder
@@ -106,13 +113,13 @@ def _mk_case(**kw) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_post_get_roundtrip_and_since_id(fresh_db, brain, intake):
+def test_post_get_roundtrip_and_since_id(fresh_db, brain, responder):
     r1 = client.post("/chat/messages", json={"content": "hello there", "case_id": None})
     assert r1.status_code == 200
     body = r1.json()
     assert body["message"]["content"] == "hello there"
     assert body["message"]["author"] == "team:cm"
-    assert body["parse"]["kind"] == "info"
+    assert body["reply"] is None  # general thread: no case, no responder
     first_id = body["message"]["id"]
 
     r2 = client.post("/chat/messages", json={"content": "second", "author": "team:md"})
@@ -124,71 +131,62 @@ def test_post_get_roundtrip_and_since_id(fresh_db, brain, intake):
     after = client.get("/chat/messages", params={"since_id": first_id}).json()
     assert [m["content"] for m in after] == ["second"]
 
-    # No case involved -> no reassessment.
-    assert not any(c[0] == "reassess_case" for c in brain)
 
-
-def test_unknown_case_404(fresh_db, brain, intake):
+def test_unknown_case_404(fresh_db, brain, responder):
     r = client.post("/chat/messages", json={"content": "x", "case_id": "nope"})
     assert r.status_code == 404
 
 
-def test_info_appends_team_notes_and_reassesses(fresh_db, brain, intake):
-    case_id = _mk_case()
-    intake["kind"] = "info"
+def test_question_gets_grounded_answer_not_a_task(fresh_db, brain, responder):
+    """'summarize blockers' must produce an ANSWER in chat and zero tasks."""
+    case_id = _mk_case(state="predicted")
     r = client.post(
         "/chat/messages",
-        json={"content": "Family prefers Maple Grove", "case_id": case_id},
+        json={"content": "summarize blockers", "case_id": case_id},
     )
     assert r.status_code == 200
+    assert r.json()["reply"] == responder["reply"]
+    # The responder was grounded in the board (the message is in the prompt).
+    assert "summarize blockers" in responder["prompts"][0]
+
+    msgs = client.get("/chat/messages", params={"case_id": case_id}).json()
+    assert msgs[-1]["author"] == "placer"
+    assert msgs[-1]["content"] == responder["reply"]
     with Session(engine) as s:
+        # No action item was fabricated from a question.
+        assert s.exec(select(DispoTask).where(DispoTask.case_id == case_id)).all() == []
         case = s.get(Case, case_id)
-        notes = case.facts["team_notes"]
-        assert notes[0]["content"] == "Family prefers Maple Grove"
-        assert notes[0]["author"] == "team:cm"
-    assert ("reassess_case", case_id) in brain
+        assert case.facts["team_notes"][0]["content"] == "summarize blockers"
+        assert case.dirty is True
 
 
-def test_instruction_creates_pending_task(fresh_db, brain, intake):
+def test_create_task_action_creates_pending_task(fresh_db, brain, responder):
     case_id = _mk_case()
-    intake.update(kind="instruction", summary="call the daughter")
+    responder.update(action_kind="create_task", detail="call the daughter",
+                     reply="I need approval to call — queued the request for the team.")
     r = client.post(
         "/chat/messages",
         json={"content": "Please call the daughter today", "case_id": case_id},
     )
     assert r.status_code == 200
-    assert r.json()["parse"]["kind"] == "instruction"
     with Session(engine) as s:
         task = s.exec(select(DispoTask).where(DispoTask.case_id == case_id)).one()
         assert task.task_type == "message_team"
         assert task.mode == "auto"
         assert task.status == "pending"
-        assert task.title == "Team instruction: call the daughter"
-        payload = getattr(task, "payload", None) or json.loads(task.detail)
-        assert payload == {"question": "Please call the daughter today"}
-        # Instruction content also lands in team_notes.
+        assert task.title == "Team request: call the daughter"
         assert s.get(Case, case_id).facts["team_notes"]
-    assert ("reassess_case", case_id) in brain
 
 
-def test_question_gets_ack_reply(fresh_db, brain, intake):
+def test_llm_failure_still_replies_and_keeps_notes(fresh_db, brain, responder):
     case_id = _mk_case()
-    intake["kind"] = "question"
-    client.post("/chat/messages", json={"content": "Any SNF beds yet?", "case_id": case_id})
-    msgs = client.get("/chat/messages", params={"case_id": case_id}).json()
-    assert msgs[-1]["author"] == "placer"
-    assert "report back" in msgs[-1]["content"]
-    assert ("reassess_case", case_id) in brain
-
-
-def test_llm_failure_degrades_to_info(fresh_db, brain, intake):
-    case_id = _mk_case()
-    intake["raise"] = True
+    responder["raise"] = True
     r = client.post("/chat/messages", json={"content": "pt ambulating", "case_id": case_id})
     assert r.status_code == 200
-    assert r.json()["parse"]["kind"] == "info"
+    assert "logged this on the case" in r.json()["reply"]
     with Session(engine) as s:
         assert s.get(Case, case_id).facts["team_notes"][0]["content"] == "pt ambulating"
+        assert s.exec(select(DispoTask).where(DispoTask.case_id == case_id)).all() == []
 
 
 def test_post_message_contract_no_commit(fresh_db):

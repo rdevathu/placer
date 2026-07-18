@@ -1,29 +1,26 @@
 """The call layer: one function, ``place_call``, that every worker uses to
 "phone" a facility, family member, payer, or vendor.
 
-In ``simulated`` mode (default) the entire short conversation is role-played by
-a single ``llm.structured`` call that returns a filled :class:`CallResult`, so
-the rest of the engine is already written against the real-call interface.
-``twilio`` mode is a post-v1 drop-in behind the same signature.
+There is deliberately NO simulation mode — Placer never fabricates a call
+outcome. In ``disabled`` mode (default) ``place_call`` raises
+:class:`CallingUnavailable` so workers park the task as waiting-on-telephony.
+``bland`` mode is the upcoming Bland AI integration behind the same signature.
 """
 
 from __future__ import annotations
 
-import json
-
-from .. import config, llm
+from .. import config
 from .schemas import CallResult
 
-__all__ = ["CallResult", "place_call"]
+__all__ = ["CallResult", "CallingUnavailable", "place_call"]
 
-_SIM_SYSTEM = (
-    "Simulate a realistic short phone call between Placer (hospital discharge "
-    "planning AI calling on behalf of County General) and the callee. Generate "
-    "a compact realistic transcript (8-16 turns) and honest structured answers. "
-    "Ground availability/capability answers in the callee record provided — "
-    "e.g. a facility with available_beds > 0 usually has a bed; one with 0 "
-    "declines or waitlists. Do not invent guarantees."
-)
+
+class CallingUnavailable(RuntimeError):
+    """No real telephony integration is enabled; the call cannot be placed.
+
+    Workers catch this and return a truthful waiting result — never a
+    fabricated outcome.
+    """
 
 
 def place_call(objective: str, questions: list, callee: dict, context: str) -> CallResult:
@@ -34,18 +31,10 @@ def place_call(objective: str, questions: list, callee: dict, context: str) -> C
     ``callee`` a dict describing who picks up (facility record, family member,
     payer line...), and ``context`` free-text case background.
     """
-    if config.CALL_MODE == "twilio":
-        raise NotImplementedError("twilio mode lands post-v1")
-    if config.CALL_MODE != "simulated":
-        raise ValueError(f"Unknown CALL_MODE '{config.CALL_MODE}' (expected 'simulated' or 'twilio')")
-
-    numbered = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
-    prompt = (
-        f"Objective of the call: {objective}\n\n"
-        f"Callee record:\n{json.dumps(callee, indent=2, default=str)}\n\n"
-        f"Case context:\n{context}\n\n"
-        f"Questions Placer needs answered:\n{numbered}\n\n"
-        "Fill the call result. Key `answers` by each question above, verbatim, "
-        "with one concise honest answer per question."
-    )
-    return llm.structured(prompt, CallResult, system=_SIM_SYSTEM)
+    if config.CALL_MODE == "bland":
+        raise NotImplementedError("bland integration lands next")
+    if config.CALL_MODE == "disabled":
+        raise CallingUnavailable(
+            "Real call required — calling is not yet enabled (Bland integration pending)"
+        )
+    raise ValueError(f"Unknown CALL_MODE '{config.CALL_MODE}' (expected 'disabled' or 'bland')")

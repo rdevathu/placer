@@ -16,7 +16,9 @@ export function ChatPanel({ patientId }: { patientId: string }) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["placer-messages", patientId],
     queryFn: () => placerApi.listMessages(patientId),
-    refetchInterval: 4000,
+    // Placer's replies arrive asynchronously from the agent engine — poll so
+    // they show up without a manual refresh.
+    refetchInterval: 3000,
   });
 
   // Keep the newest message in view as messages arrive.

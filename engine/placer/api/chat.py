@@ -15,7 +15,6 @@ bodies — the brain package lands in parallel and tests monkeypatch it via
 from __future__ import annotations
 
 import importlib
-import json
 import logging
 from typing import Optional
 
@@ -23,14 +22,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-try:  # Python 3.9: Literal lives in typing
-    from typing import Literal
-except ImportError:  # pragma: no cover
-    from typing_extensions import Literal
-
 from sqlmodel import Session, select
 
-from .. import llm
+from ..board import build_board, message_dict, named_pathways
 from ..db import get_session
 from ..models import (
     Approval,
@@ -41,8 +35,6 @@ from ..models import (
     Referral,
     utcnow,
 )
-from ..registry import load_pathways
-from ..state import READINESS_DIMENSIONS, derive_readiness
 
 router = APIRouter(tags=["chat"])
 
@@ -119,13 +111,6 @@ def _actions():
 # ---------------------------------------------------------------------------
 
 
-class IntakeParse(BaseModel):
-    """LLM classification of an inbound team message."""
-
-    kind: Literal["answer", "info", "instruction", "question"]
-    summary: str
-
-
 class MessageIn(BaseModel):
     content: str
     case_id: Optional[str] = None
@@ -141,16 +126,8 @@ class CommitIn(BaseModel):
     resolved_by: str
 
 
-def _msg_dict(m: ChatMessage) -> dict:
-    return {
-        "id": m.id,
-        "case_id": m.case_id,
-        "author": m.author,
-        "kind": m.kind,
-        "content": m.content,
-        "approval_id": m.approval_id,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-    }
+# Message serialization lives in placer.board (shared with the responder).
+_msg_dict = message_dict
 
 
 # ---------------------------------------------------------------------------
@@ -189,14 +166,15 @@ def list_messages(
 
 @router.post(
     "/chat/messages",
-    summary="Post a team message (runs Intake classification)",
+    summary="Post a team message (Placer replies like a chat participant)",
     description=(
-        "Stores the message, then classifies it with one LLM call as "
-        "answer | info | instruction | question. info/answer append to the "
-        "case's team_notes facts and mark the case for reassessment; "
-        "instruction additionally creates a pending message_team DispoTask; "
-        "question gets an acknowledgement reply. LLM failure degrades to "
-        "'info'. Returns the stored message plus the parse."
+        "Stores the message, then generates ONE grounded Placer reply from the "
+        "case's readiness board (placer.brain.respond.respond_to_team): a "
+        "question like 'summarize blockers' gets a direct answer, never a "
+        "task. The message is appended to the case's team_notes and the case "
+        "is marked for reassessment; a task is created only when the message "
+        "asks Placer to do new real work. Returns the stored message plus the "
+        "reply text (null for general-thread messages with no case)."
     ),
 )
 def create_message(body: MessageIn, session: Session = Depends(get_session)) -> dict:
@@ -210,71 +188,18 @@ def create_message(body: MessageIn, session: Session = Depends(get_session)) -> 
         session, body.content, case_id=body.case_id, author=body.author
     )
 
-    # Intake: one structured call; any failure degrades to plain "info".
-    try:
-        parse = llm.structured(
-            "A care-team member posted this message in the discharge-planning "
-            "chat. Classify it.\n\n"
-            f"Author: {body.author}\nMessage: {body.content}\n\n"
-            "kind meanings — answer: answers a question Placer asked earlier; "
-            "info: shares information about the patient or case; instruction: "
-            "asks Placer (or the team) to do something; question: asks Placer "
-            "a question. summary: one short line restating the message.",
-            IntakeParse,
-            system="You are the intake classifier for Placer, a discharge-planning agent.",
-        )
-        kind, summary = parse.kind, parse.summary
-    except Exception:
-        kind, summary = "info", body.content[:120]
-
+    reply: Optional[str] = None
     if case is not None:
-        if kind in ("info", "answer", "instruction"):
-            # JSON columns don't track in-place mutation — rebuild the dict.
-            facts = dict(case.facts or {})
-            notes = list(facts.get("team_notes") or [])
-            notes.append(
-                {
-                    "ts": utcnow().isoformat(),
-                    "author": body.author,
-                    "content": body.content,
-                }
-            )
-            facts["team_notes"] = notes
-            case.facts = facts
-            case.updated_at = utcnow()
-            session.add(case)
+        # Shared responder: appends team_notes, marks dirty, posts the reply
+        # (author='placer' — the Iliad mirror loop skips it as an echo), and
+        # creates a task only when the message needs real work.
+        from placer.brain.respond import respond_to_team
 
-        if kind == "instruction":
-            payload = {"question": body.content}
-            task_kwargs = dict(
-                case_id=case.id,
-                task_type="message_team",
-                mode="auto",
-                status="pending",
-                title=f"Team instruction: {summary}",
-                # Keyed on the message id so repeated instructions never collide.
-                idempotency_key=f"{case.id}:message_team:{msg.id}",
-            )
-            # models.py is frozen without a payload column in this wave; carry
-            # the payload there if it exists, else in `detail` as JSON.
-            if "payload" in getattr(DispoTask, "model_fields", {}):
-                task_kwargs["payload"] = payload
-            else:
-                task_kwargs["detail"] = json.dumps(payload)
-            session.add(DispoTask(**task_kwargs))
-
-        if kind == "question":
-            post_message(
-                session,
-                "On it — I'll look into this and report back.",
-                case_id=case.id,
-            )
-
-        _actions().reassess_case(session, case.id)
+        reply = respond_to_team(session, case, body.content, body.author)
 
     session.commit()
     session.refresh(msg)
-    return {"message": _msg_dict(msg), "parse": {"kind": kind, "summary": summary}}
+    return {"message": _msg_dict(msg), "reply": reply}
 
 
 # ---------------------------------------------------------------------------
@@ -455,32 +380,6 @@ def clear_barrier(
 
 _OPEN_BARRIER = {"open", "in_progress", "blocked"}
 _OPEN_TASK = {"suggested", "pending", "approved", "in_progress", "waiting"}
-_TASK_GROUPS = [
-    "suggested",
-    "pending",
-    "approved",
-    "in_progress",
-    "waiting",
-    "done",
-    "failed",
-    "cancelled",
-]
-
-
-def _named_pathways(active: Optional[list]) -> list:
-    catalog = load_pathways()
-    out = []
-    for entry in active or []:
-        pid = entry.get("pathway_id")
-        info = catalog.get(pid, {})
-        out.append(
-            {
-                "pathway_id": pid,
-                "confidence": entry.get("confidence"),
-                "name": info.get("name", f"Pathway {pid}"),
-            }
-        )
-    return out
 
 
 @router.get("/cases", tags=["board"], summary="List all cases with rollup counts")
@@ -499,7 +398,7 @@ def list_cases(session: Session = Depends(get_session)) -> list:
                 "id": c.id,
                 "patient_id": c.patient_id,
                 "state": c.state,
-                "active_pathways": _named_pathways(c.active_pathways),
+                "active_pathways": named_pathways(c.active_pathways),
                 "dirty": c.dirty,
                 "next_review_at": c.next_review_at.isoformat() if c.next_review_at else None,
                 "counts": {
@@ -517,77 +416,7 @@ def case_board(case_id: str, session: Session = Depends(get_session)) -> dict:
     case = session.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail=f"Unknown case '{case_id}'")
-
-    barriers = session.exec(select(Barrier).where(Barrier.case_id == case_id)).all()
-    tasks = session.exec(select(DispoTask).where(DispoTask.case_id == case_id)).all()
-    referrals = session.exec(select(Referral).where(Referral.case_id == case_id)).all()
-    approvals = session.exec(
-        select(Approval).where(Approval.case_id == case_id, Approval.status == "pending")
-    ).all()
-    messages = session.exec(
-        select(ChatMessage)
-        .where(ChatMessage.case_id == case_id)
-        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-        .limit(20)
-    ).all()
-
-    readiness = derive_readiness(
-        [{"dimension": b.dimension, "status": b.status} for b in barriers],
-        case.state,
-    )
-
-    barriers_by_dim: dict = {}
-    for b in barriers:
-        barriers_by_dim.setdefault(b.dimension, []).append(
-            {
-                "id": b.id,
-                "btype": b.btype,
-                "status": b.status,
-                "description": b.description,
-                "pathway_ids": b.pathway_ids,
-            }
-        )
-
-    tasks_by_status: dict = {g: [] for g in _TASK_GROUPS}
-    for t in tasks:
-        tasks_by_status.setdefault(t.status, []).append(
-            {
-                "id": t.id,
-                "title": t.title,
-                "action_id": t.action_id,
-                "mode": t.mode,
-                "task_type": t.task_type,
-                "pathway_ids": t.pathway_ids,
-            }
-        )
-
-    return {
-        "id": case.id,
-        "patient_id": case.patient_id,
-        "encounter_id": case.encounter_id,
-        "state": case.state,
-        "brief": case.brief,
-        "dirty": case.dirty,
-        "next_review_at": case.next_review_at.isoformat() if case.next_review_at else None,
-        "active_pathways": _named_pathways(case.active_pathways),
-        "readiness": readiness,
-        "barriers": barriers_by_dim,
-        "tasks": tasks_by_status,
-        "referrals": [
-            {
-                "id": r.id,
-                "facility_name": r.facility_name,
-                "pathway_id": r.pathway_id,
-                "status": r.status,
-                "denial_reason": r.denial_reason,
-            }
-            for r in referrals
-        ],
-        "approvals": [
-            {"id": a.id, "kind": a.kind, "prompt": a.prompt} for a in approvals
-        ],
-        "messages": [_msg_dict(m) for m in reversed(messages)],
-    }
+    return build_board(session, case)
 
 
 # ---------------------------------------------------------------------------

@@ -150,8 +150,9 @@ def _route_event(session: Session, ev: dict) -> None:
 
 def _route_placer_message(session: Session, ev: dict) -> None:
     """Inbound Iliad Placer-tab chat. Provider messages are mirrored into the
-    engine thread + team_notes and dirty the case (no Watchman — always
-    material); sender='placer' is the echo of our own outbound mirror."""
+    engine thread, then answered by the shared responder (grounded reply +
+    team_notes + dirty); sender='placer' is the echo of our own outbound
+    mirror — including the responder's own replies — and is skipped."""
     payload = ev.get("payload") or {}
     if payload.get("sender") != "provider":
         return  # our own mirrored message coming back around
@@ -169,13 +170,19 @@ def _route_placer_message(session: Session, ev: dict) -> None:
         post_message(session, text, case_id=case.id, author=author)
     except ImportError:
         logger.warning("brain: placer.api.chat unavailable; provider message not echoed to chat")
-    # JSON columns don't track in-place mutation — rebuild the dict.
-    facts = dict(case.facts or {})
-    notes = list(facts.get("team_notes") or [])
-    notes.append({"ts": utcnow().isoformat(), "author": author, "content": text})
-    facts["team_notes"] = notes
-    case.facts = facts
-    _mark_dirty(session, case)
+    try:
+        from .respond import respond_to_team
+
+        respond_to_team(session, case, text, author)
+    except Exception:
+        # Reply failed — still capture the note + dirty so nothing is lost.
+        logger.exception("brain: responder failed for case %s", case.id)
+        facts = dict(case.facts or {})  # JSON column: rebuild the dict
+        notes = list(facts.get("team_notes") or [])
+        notes.append({"ts": utcnow().isoformat(), "author": author, "content": text})
+        facts["team_notes"] = notes
+        case.facts = facts
+        _mark_dirty(session, case)
 
 
 def _heartbeat(session: Session) -> None:
@@ -235,6 +242,9 @@ def _execute_tasks(session: Session, ehr: EHRClient) -> None:
         logger.debug("brain: placer.workers not available yet; skipping executor")
         return
 
+    # Only pending/approved are ever picked up — 'waiting' tasks (parked on
+    # telephony/integrations/humans) are never re-executed by the loop; a
+    # human unblocks them by re-approving or the plan replaces them.
     runnable = [
         t for t in session.exec(
             select(DispoTask).where(DispoTask.status.in_(("pending", "approved")))  # type: ignore[attr-defined]
@@ -253,18 +263,34 @@ def _execute_tasks(session: Session, ehr: EHRClient) -> None:
         object.__setattr__(task, "payload", router_logic.decode_payload(task))
         try:
             result = run_task(session, task)
-            task.status = "done"
-            task.result = result if isinstance(result, dict) else {"result": result}
+            result = result if isinstance(result, dict) else {"result": result}
+            task.result = result
+            if result.get("waiting_on"):
+                # Truthful park: the worker could not act for real (no
+                # telephony / integration / needs a human). One chat note,
+                # no dirty-marking — nothing about the case changed.
+                task.status = "waiting"
+                if not result.get("chat_posted"):
+                    post_chat(
+                        session,
+                        f"Waiting on {result['waiting_on']}: {task.title} — "
+                        f"{result.get('note', 'not yet enabled')}",
+                        case_id=task.case_id,
+                        kind="notification",
+                    )
+            else:
+                task.status = "done"
+                touched_cases.add(task.case_id)
         except Exception as exc:
             logger.exception("brain: task %s (%s) failed", task.id, task.task_type)
             task.status = "failed"
             task.result = {"error": str(exc)}
             _escalate_failure(session, task, exc)
+            touched_cases.add(task.case_id)
         task.updated_at = utcnow()
         session.add(task)
         session.commit()
         _mirror_task_outcome(task)
-        touched_cases.add(task.case_id)
 
     for cid in touched_cases:
         case = session.get(Case, cid)

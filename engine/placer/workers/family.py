@@ -13,7 +13,7 @@ from sqlmodel import Session
 
 from .. import calls
 from ..models import utcnow
-from .common import get_case, notify
+from .common import get_case, notify, telephony_waiting
 
 PREFERENCE_QUESTIONS = [
     "What discharge destination does the family prefer (home, a family member's home, assisted living, skilled nursing, rehab, hospice)?",
@@ -26,7 +26,11 @@ PREFERENCE_QUESTIONS = [
 
 def preference_call(session: Session, task, ehr, worker: str) -> dict:
     """Call the family, store the preference profile in case.facts, mirror the
-    call into the EHR communications log, and post the headline preference."""
+    call into the EHR communications log, and post the headline preference.
+    Without telephony the task parks as waiting — no outcome is ever invented."""
+    waiting = telephony_waiting()
+    if waiting is not None:
+        return waiting
     case = get_case(session, task.case_id)
     chart = ehr.get_chart(case.patient_id)
     patient = chart.get("patient") or {}

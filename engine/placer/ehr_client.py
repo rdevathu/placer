@@ -99,6 +99,20 @@ class EHRClient:
 
     # -- orders --------------------------------------------------------------
 
+    def list_orders(
+        self,
+        patient_id: str,
+        status: Optional[str] = None,
+        order_type: Optional[str] = None,
+    ) -> list:
+        """``GET /orders?patient_id=`` — used to dedupe before drafting."""
+        params: dict = {"patient_id": patient_id}
+        if status:
+            params["status"] = status
+        if order_type:
+            params["order_type"] = order_type
+        return self._get("/orders", params=params)
+
     def create_order(
         self,
         patient_id: str,

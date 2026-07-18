@@ -119,8 +119,22 @@ def _ensure_commit_proposal(session: Session, case: Case, leader_id: int) -> Non
     ids for the case>]}. The card is informational; the chat layer's
     POST /cases/{id}/commit endpoint calls actions.commit_pathway with the
     pathway the team picks.
+
+    Refresh gate: an existing card is only rewritten (and its chat message
+    re-posted) when the LEADER changed — a reassessment with the same leader
+    leaves the card and the chat thread alone.
     """
     from placer.models import DispoTask  # local: avoid widening module imports
+
+    name = load_pathways().get(leader_id, {}).get("name", f"pathway {leader_id}")
+    existing = session.exec(
+        select(Approval).where(Approval.case_id == case.id, Approval.kind == "batch", Approval.status == "pending")
+    ).first()
+    if existing is not None:
+        prior = existing.task_ids or {}
+        prior_leader = prior.get("pathway_id") if isinstance(prior, dict) else None
+        if prior_leader == leader_id:
+            return  # same leader — do not churn the card every cycle
 
     open_task_ids = [
         t.id for t in session.exec(
@@ -131,15 +145,19 @@ def _ensure_commit_proposal(session: Session, case: Case, leader_id: int) -> Non
         ).all()
     ]
     payload = {"pathway_id": leader_id, "task_ids": open_task_ids}
-    name = load_pathways().get(leader_id, {}).get("name", f"pathway {leader_id}")
 
-    existing = session.exec(
-        select(Approval).where(Approval.case_id == case.id, Approval.kind == "batch", Approval.status == "pending")
-    ).first()
     if existing is not None:
         existing.task_ids = payload
         existing.prompt = f"Commit to {name}?"
         session.add(existing)
+        session.commit()
+        post_chat(
+            session,
+            f"Leading pathway changed: now {name}. Review the plan and commit when the team agrees.",
+            case_id=case.id,
+            kind="approval_card",
+            approval_id=existing.id,
+        )
         session.commit()
         return
 
@@ -180,13 +198,6 @@ def run_assessment(session: Session, case: Case, ehr: EHRClient) -> GpsAssessmen
     barriers = _load_barriers(session, case.id)
     open_barriers = [b for b in barriers if b.status in _OPEN_BARRIER_STATUSES]
 
-    # -- mirror to EHR (best-effort: EHR downtime must not kill the loop) ----
-    try:
-        _post_assessment_to_ehr(case, assessment, ehr, open_barriers)
-    except Exception:  # noqa: BLE001 — logged by caller's Run row via outcome
-        import logging
-        logging.getLogger(__name__).exception("failed posting dispo assessment to EHR")
-
     # -- plan ----------------------------------------------------------------
     specs = router_logic.build_plan(session, case, barriers, case.active_pathways or [])
     router_logic.persist_plan(session, case, specs)
@@ -209,6 +220,11 @@ def run_assessment(session: Session, case: Case, ehr: EHRClient) -> GpsAssessmen
             )
             session.commit()
 
+    # -- mirror to EHR, gated (best-effort: EHR downtime must not kill the
+    # loop). Post only when something the team would care about moved — never
+    # a new dispo_assessments row per reassessment cycle.
+    _maybe_post_assessment(session, case, assessment, ehr, open_barriers)
+
     # -- commit-proposal card ------------------------------------------------
     if case.state == state.DispoState.predicted.value and case.active_pathways:
         leader = max(case.active_pathways, key=lambda p: p.get("confidence", 0))
@@ -216,3 +232,45 @@ def run_assessment(session: Session, case: Case, ehr: EHRClient) -> GpsAssessmen
 
     session.commit()
     return assessment
+
+
+# Minimum leader-confidence movement (vs the last POSTED assessment) that
+# justifies a fresh EHR dispo-assessment row.
+_POST_CONFIDENCE_DELTA = 0.10
+
+
+def _maybe_post_assessment(session: Session, case: Case, assessment: GpsAssessment,
+                           ehr: EHRClient, open_barriers: List[Barrier]) -> None:
+    """Post to the EHR dispo_assessments table ONLY when (a) it is the first
+    assessment for the case, (b) the leading pathway changed, (c) the leader's
+    confidence moved >= 0.10 vs the last posted assessment, or (d) the case
+    state changed (e.g. commit / green). Internal engine state still updates
+    every cycle; this gate exists so the EHR Disposition tab isn't spammed."""
+    if not assessment.distribution:
+        return
+    leader = max(assessment.distribution, key=lambda s: s.confidence)
+    last = (case.facts or {}).get("last_posted_assessment")
+    should_post = (
+        not isinstance(last, dict)
+        or last.get("pathway_id") != leader.pathway_id
+        or abs(leader.confidence - float(last.get("confidence") or 0.0)) >= _POST_CONFIDENCE_DELTA
+        or last.get("state") != case.state
+    )
+    if not should_post:
+        return
+    try:
+        _post_assessment_to_ehr(case, assessment, ehr, open_barriers)
+    except Exception:  # noqa: BLE001 — logged; retried next material change
+        import logging
+        logging.getLogger(__name__).exception("failed posting dispo assessment to EHR")
+        return
+    # Only remember a SUCCESSFUL post (JSON column: assign a fresh dict).
+    facts = dict(case.facts or {})
+    facts["last_posted_assessment"] = {
+        "pathway_id": leader.pathway_id,
+        "confidence": leader.confidence,
+        "state": case.state,
+    }
+    case.facts = facts
+    session.add(case)
+    session.commit()

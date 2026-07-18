@@ -1,7 +1,7 @@
 """Structured result of one outbound Placer call.
 
-``CallResult`` is the frozen shape every call handler consumes, regardless of
-whether the call was simulated (LLM role-play) or, later, a real Twilio call.
+``CallResult`` is the frozen shape every call handler consumes; the upcoming
+Bland AI integration fills it from a real phone conversation.
 """
 
 from __future__ import annotations

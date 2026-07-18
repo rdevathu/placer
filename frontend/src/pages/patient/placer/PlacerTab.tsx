@@ -1,7 +1,6 @@
 import { usePatientChart } from "../../PatientDetailPage";
 import { Badge } from "../../../components/ui";
-import { DispositionSection } from "./DispositionSection";
-import { TasksSection } from "./TasksSection";
+import { EngineBoardPanel } from "./EngineBoard";
 import { CommunicationsSection } from "./CommunicationsSection";
 import { ChatPanel } from "./ChatPanel";
 
@@ -17,8 +16,7 @@ export default function PlacerTab() {
             Disposition planning by Placer, embedded in Iliad
           </span>
         </div>
-        <DispositionSection />
-        <TasksSection />
+        <EngineBoardPanel />
         <CommunicationsSection />
       </div>
 

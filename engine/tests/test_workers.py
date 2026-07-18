@@ -1,9 +1,9 @@
 """Worker dispatch + handler tests, fully offline.
 
-Seams stubbed: ``placer.llm.structured`` (LLM), ``placer.calls.place_call``
-(the call layer, where a handler consumes CallResult), ``EHRClient`` methods
-(recorded, no network), and ``placer.api.chat`` (a fake module in sys.modules,
-since the real one is built by a parallel wave).
+Seams stubbed: ``placer.llm.structured`` (LLM), EHRClient methods (recorded,
+no network), and ``placer.api.chat`` (a fake module in sys.modules). Calling
+is disabled by default (no telephony integration), so every external-contact
+worker must park as waiting WITHOUT writing anything — no simulated outcomes.
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ import sys
 import types
 
 import pytest
+from sqlmodel import select
 
-from placer.calls.schemas import CallResult
+from placer import calls, config
 from placer.models import Barrier, Case, DispoTask, FacilityIntel, Referral
 from placer.workers import run_task
-from placer.workers.family import PREFERENCE_QUESTIONS
 
 # ---------------------------------------------------------------------------
 # Stubs / fixtures
@@ -35,10 +35,12 @@ CHART = {
     "active_problems": [{"display": "Ischemic stroke"}],
 }
 
+WAITING_NOTE = "Real call required — calling is not yet enabled (Bland integration pending)"
+
 
 @pytest.fixture()
 def chat_log(monkeypatch):
-    """Fake placer.api.chat module (owned by a parallel wave)."""
+    """Fake placer.api.chat module (chat surface owned by the API layer)."""
     log = []
     mod = types.ModuleType("placer.api.chat")
 
@@ -55,7 +57,7 @@ def ehr_log(monkeypatch):
     """Record-only EHRClient: no httpx client, no network."""
     from placer.ehr_client import EHRClient
 
-    log = {"orders": [], "comms": [], "facility_updates": [], "actors": []}
+    log = {"orders": [], "comms": [], "facility_updates": [], "actors": [], "existing_orders": []}
 
     def fake_init(self, base_url=None, actor="agent:test", timeout=10.0):
         self.actor = actor
@@ -64,6 +66,9 @@ def ehr_log(monkeypatch):
     def create_order(self, **kw):
         log["orders"].append(kw)
         return {"id": f"order-{len(log['orders'])}", "status": kw.get("status", "draft")}
+
+    def list_orders(self, patient_id, status=None, order_type=None):
+        return list(log["existing_orders"])
 
     def create_communication(self, **kw):
         log["comms"].append(kw)
@@ -79,6 +84,7 @@ def ehr_log(monkeypatch):
     monkeypatch.setattr(EHRClient, "__init__", fake_init)
     monkeypatch.setattr(EHRClient, "close", lambda self: None)
     monkeypatch.setattr(EHRClient, "create_order", create_order)
+    monkeypatch.setattr(EHRClient, "list_orders", list_orders)
     monkeypatch.setattr(EHRClient, "create_communication", create_communication)
     monkeypatch.setattr(EHRClient, "list_facilities", list_facilities)
     monkeypatch.setattr(EHRClient, "update_facility", update_facility)
@@ -120,15 +126,32 @@ def make_referral(session, case, facility_id="fac-1", name="Sunrise SNF", status
     return ref
 
 
-def stub_call(monkeypatch, result: CallResult):
-    made = []
+def assert_waiting_on_telephony(result):
+    assert result["waiting_on"] == "telephony"
+    assert result["note"] == WAITING_NOTE
 
-    def fake_place_call(objective, questions, callee, context):
-        made.append({"objective": objective, "questions": questions, "callee": callee})
-        return result
 
-    monkeypatch.setattr("placer.calls.place_call", fake_place_call)
-    return made
+# ---------------------------------------------------------------------------
+# Call layer: no fabrication, ever
+# ---------------------------------------------------------------------------
+
+
+def test_place_call_disabled_raises_calling_unavailable():
+    assert config.CALL_MODE == "disabled"  # the default: no telephony
+    with pytest.raises(calls.CallingUnavailable):
+        calls.place_call("objective", ["q"], {"role": "facility"}, "context")
+
+
+def test_place_call_bland_not_implemented_yet(monkeypatch):
+    monkeypatch.setattr(config, "CALL_MODE", "bland")
+    with pytest.raises(NotImplementedError, match="bland"):
+        calls.place_call("objective", ["q"], {"role": "facility"}, "context")
+
+
+def test_place_call_unknown_mode_rejected(monkeypatch):
+    monkeypatch.setattr(config, "CALL_MODE", "simulated")  # removed mode
+    with pytest.raises(ValueError, match="simulated"):
+        calls.place_call("objective", ["q"], {"role": "facility"}, "context")
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +165,7 @@ def test_unknown_task_type_raises(session, case, chat_log, ehr_log):
         run_task(session, task)
 
 
-def test_run_task_never_touches_status_and_sets_result(session, case, chat_log, ehr_log, monkeypatch):
-    stub_call(monkeypatch, CallResult(transcript="t", outcome="ok", answers={}, notes=""))
+def test_run_task_never_touches_status_and_sets_result(session, case, chat_log, ehr_log):
     task = make_task(session, case, "book_transport")
     result = run_task(session, task)
     assert task.status == "approved"  # lifecycle is the brain's job
@@ -157,17 +179,48 @@ def test_run_task_never_touches_status_and_sets_result(session, case, chat_log, 
 
 def test_draft_order_creates_draft_ehr_order(session, case, chat_log, ehr_log):
     task = make_task(session, case, "draft_order",
-                     {"order_type": "lab", "display": "COVID-19 PCR", "detail": "Required for SNF intake"})
+                     {"order_type": "lab", "display": "CBC with differential", "detail": "Pre-discharge labs"})
     result = run_task(session, task)
     assert len(ehr_log["orders"]) == 1
     order = ehr_log["orders"][0]
     assert order["status"] == "draft"
     assert order["order_type"] == "lab"
-    assert order["display"] == "COVID-19 PCR"
+    assert order["display"] == "CBC with differential"
     assert order["patient_id"] == "hero-a-stroke"
     assert result["order_id"] == "order-1"
     assert ehr_log["actors"] == ["agent:clinical-prep"]
     assert any("pended" in m["content"] for m in chat_log)
+
+
+def test_draft_order_dedupes_existing_covid_order(session, case, chat_log, ehr_log):
+    """A signed 'SARS-CoV-2 (COVID-19) NAA test' already covers an intended
+    'COVID-19 PCR' — no second order, result references the existing one."""
+    ehr_log["existing_orders"] = [
+        {"id": "ehr-order-77", "order_type": "lab", "status": "signed",
+         "display": "SARS-CoV-2 (COVID-19) NAA test"},
+    ]
+    task = make_task(session, case, "draft_order",
+                     {"order_type": "lab", "display": "COVID-19 PCR", "detail": "Required for SNF intake"})
+    result = run_task(session, task)
+    assert ehr_log["orders"] == []  # nothing created
+    assert result["deduped"] is True
+    assert result["order_id"] == "ehr-order-77"
+    assert result["status"] == "signed"
+    assert any("already ordered" in m["content"] and "instead of reordering" in m["content"]
+               for m in chat_log)
+
+
+def test_draft_order_ignores_completed_and_unrelated_orders(session, case, chat_log, ehr_log):
+    ehr_log["existing_orders"] = [
+        {"id": "o1", "order_type": "lab", "status": "completed",
+         "display": "SARS-CoV-2 (COVID-19) NAA test"},  # done — re-order allowed
+        {"id": "o2", "order_type": "lab", "status": "signed", "display": "Basic metabolic panel"},
+        {"id": "o3", "order_type": "consult", "status": "draft", "display": "COVID clearance consult"},
+    ]
+    result = run_task(session, make_task(session, case, "draft_order",
+                                         {"order_type": "lab", "display": "COVID-19 PCR"}))
+    assert len(ehr_log["orders"]) == 1
+    assert result.get("deduped") is None
 
 
 def test_draft_consult_forces_consult_type(session, case, chat_log, ehr_log):
@@ -177,14 +230,22 @@ def test_draft_consult_forces_consult_type(session, case, chat_log, ehr_log):
     assert ehr_log["orders"][0]["status"] == "draft"
 
 
+def test_draft_consult_dedupes_existing_consult(session, case, chat_log, ehr_log):
+    ehr_log["existing_orders"] = [
+        {"id": "c-1", "order_type": "consult", "status": "draft", "display": "PM&R consult"},
+    ]
+    result = run_task(session, make_task(session, case, "draft_consult",
+                                         {"display": "PM&R evaluation for IRF"}))
+    assert ehr_log["orders"] == []
+    assert result["order_id"] == "c-1"
+
+
 # ---------------------------------------------------------------------------
-# Placement
+# Placement — no telephony: park as waiting, write NOTHING
 # ---------------------------------------------------------------------------
 
 
 def test_build_shortlist_ranks_caps_and_dedupes(session, case, chat_log, ehr_log):
-    from sqlmodel import select
-
     result = run_task(session, make_task(session, case, "build_shortlist", {"pathway_id": 11}))
     ids = [r["facility_id"] for r in result["referrals"]]
     assert ids == ["fac-4", "fac-1", "fac-2"]  # ranked by beds, capped at 3
@@ -207,179 +268,100 @@ def test_build_shortlist_unmapped_pathway_raises(session, case, chat_log, ehr_lo
         run_task(session, make_task(session, case, "build_shortlist", {"pathway_id": 4}))
 
 
-def test_intake_call_verifies_and_updates_intel(session, case, chat_log, ehr_log, monkeypatch):
-    from sqlmodel import select
-
+def test_intake_call_waits_on_telephony_and_writes_nothing(session, case, chat_log, ehr_log):
     ref = make_referral(session, case, status="shortlisted")
-    stub_call(monkeypatch, CallResult(
-        transcript="Placer: ...", outcome="Two beds open; referrals via portal",
-        answers={"How many beds do you currently have available?": "2 beds right now"},
-        notes="",
-    ))
     result = run_task(session, make_task(session, case, "facility_intake_call", {"referral_id": ref.id}))
-    assert ref.status == "intake_verified"
-    assert result["beds_available"] == 2
-    intel = session.exec(select(FacilityIntel).where(FacilityIntel.facility_id == "fac-1")).first()
-    assert intel.beds_available == 2 and intel.last_verified_at is not None
-    assert ("fac-1", {"available_beds": 2}) in ehr_log["facility_updates"]
-    assert ehr_log["comms"][0]["party_type"] == "facility"
+    assert_waiting_on_telephony(result)
+    session.refresh(ref)
+    assert ref.status == "shortlisted"  # not advanced
+    assert ref.notes is None
+    assert ehr_log["comms"] == []
+    assert ehr_log["facility_updates"] == []
+    assert session.exec(select(FacilityIntel)).all() == []
+    session.refresh(case)
+    assert case.dirty is False
 
 
-def test_intake_call_hard_no_capacity_declines(session, case, chat_log, ehr_log, monkeypatch):
-    ref = make_referral(session, case, facility_id="fac-3", name="Willow SNF")
-    stub_call(monkeypatch, CallResult(
-        transcript="t", outcome="Census full, no beds",
-        answers={"How many beds do you currently have available?": "0"}, notes="",
-    ))
-    run_task(session, make_task(session, case, "facility_intake_call", {"referral_id": ref.id}))
-    assert ref.status == "declined"
-    assert ref.denial_reason == "no_bed"
-    assert case.dirty is True
-
-
-def test_screen_call_advances_to_screened_with_pathway_questions(session, case, chat_log, ehr_log, monkeypatch):
+def test_screen_call_waits_on_telephony(session, case, chat_log, ehr_log):
     ref = make_referral(session, case, status="intake_verified")
-    made = stub_call(monkeypatch, CallResult(
-        transcript="t", outcome="Can meet all clinical needs",
-        answers={"Does the patient need IV therapy, and can the facility administer it?": "Yes, we run IV antibiotics"},
-        notes="",
-    ))
     result = run_task(session, make_task(session, case, "facility_screen_call", {"referral_id": ref.id}))
-    assert ref.status == "screened"
-    assert result["denial_reason"] is None
-    # The pathway-11 requirement checklist drove the call.
-    assert len(made[0]["questions"]) == 8
-    assert "IV therapy" in " ".join(made[0]["questions"])
-    assert "Screen call:" in ref.notes
+    assert_waiting_on_telephony(result)
+    session.refresh(ref)
+    assert ref.status == "intake_verified"
+    assert ehr_log["comms"] == []
 
 
-def test_screen_call_decline_records_categorized_reason(session, case, chat_log, ehr_log, monkeypatch):
-    from sqlmodel import select
-
-    ref = make_referral(session, case, facility_id="fac-2", name="Oak Grove SNF", status="intake_verified")
-    stub_call(monkeypatch, CallResult(
-        transcript="t", outcome="Declined: cannot manage a wound VAC",
-        answers={}, notes="No wound-care nurse on staff",
-    ))
-    result = run_task(session, make_task(session, case, "facility_screen_call", {"referral_id": ref.id}))
-    assert ref.status == "declined"
-    assert ref.denial_reason == "clinical_capability"
-    assert result["denial_reason"] == "clinical_capability"
-    intel = session.exec(select(FacilityIntel).where(FacilityIntel.facility_id == "fac-2")).first()
-    assert len(intel.decline_history) == 1
-    assert intel.decline_history[0]["reason"] == "clinical_capability"
-    assert case.dirty is True
-
-
-def test_screen_call_from_terminal_state_raises(session, case, chat_log, ehr_log, monkeypatch):
-    ref = make_referral(session, case, status="accepted")
-    stub_call(monkeypatch, CallResult(transcript="t", outcome="ok", answers={}, notes=""))
-    with pytest.raises(ValueError, match="accepted"):
-        run_task(session, make_task(session, case, "facility_screen_call", {"referral_id": ref.id}))
-
-
-def test_submit_referral_generates_confirmation(session, case, chat_log, ehr_log):
+def test_submit_referral_waits_on_portal_no_fake_confirmation(session, case, chat_log, ehr_log):
     ref = make_referral(session, case, status="screened")
     result = run_task(session, make_task(session, case, "submit_referral", {"referral_id": ref.id}))
-    assert ref.status == "pending"
-    assert result["confirmation"].startswith("REF-")
-    assert result["confirmation"] in ref.notes
-    assert ehr_log["comms"][0]["modality"] == "portal"
+    assert result["waiting_on"] == "referral_portal"
+    assert "referral portal integration pending" in result["note"]
+    assert "confirmation" not in result
+    session.refresh(ref)
+    assert ref.status == "screened"  # untouched
+    assert ref.notes is None
+    assert ehr_log["comms"] == []
 
 
-def test_finalize_acceptance_clears_destination_barrier_and_holds_bed(session, case, chat_log, ehr_log, monkeypatch):
+def test_submit_referral_already_submitted_short_circuits(session, case, chat_log, ehr_log):
+    ref = make_referral(session, case, status="pending")
+    result = run_task(session, make_task(session, case, "submit_referral", {"referral_id": ref.id}))
+    assert result == {"referral_id": ref.id, "status": "pending", "note": "already submitted"}
+
+
+def test_finalize_acceptance_waits_on_telephony_barriers_untouched(session, case, chat_log, ehr_log):
     ref = make_referral(session, case, status="pending")
     dest = Barrier(case_id=case.id, pathway_ids=[11], dimension="destination",
                    btype="no_bed_secured", status="open")
-    medical = Barrier(case_id=case.id, dimension="medical", btype="iv_abx_course", status="open")
     session.add(dest)
-    session.add(medical)
     session.commit()
-
-    stub_call(monkeypatch, CallResult(
-        transcript="t", outcome="Accepted; bed held for 48 hours", answers={}, notes="",
-    ))
     result = run_task(session, make_task(session, case, "finalize_acceptance", {"referral_id": ref.id}))
-    assert ref.status == "accepted"
-    assert ref.bed_hold_expires is not None
-    assert result["barriers_cleared"] == 1
-    assert dest.status == "cleared"
-    assert medical.status == "open"  # never touch medical barriers
-    assert case.dirty is True
-    # The taken bed is mirrored back to the EHR (fac-1 had 3).
-    assert ("fac-1", {"available_beds": 2}) in ehr_log["facility_updates"]
-    assert any("Bed secured at Sunrise SNF" in m["content"] for m in chat_log)
-
-
-def test_finalize_decline_categorizes_and_records(session, case, chat_log, ehr_log, monkeypatch):
-    ref = make_referral(session, case, status="pending")
-    stub_call(monkeypatch, CallResult(
-        transcript="t", outcome="Declined — patient is out of network for their plan",
-        answers={}, notes="",
-    ))
-    result = run_task(session, make_task(session, case, "finalize_acceptance", {"referral_id": ref.id}))
-    assert ref.status == "declined"
-    assert result["denial_reason"] == "network"
+    assert_waiting_on_telephony(result)
+    session.refresh(ref)
+    assert ref.status == "pending"
     assert ref.bed_hold_expires is None
+    session.refresh(dest)
+    assert dest.status == "open"  # no invented acceptance, no barrier clear
+    assert ehr_log["facility_updates"] == []
 
 
 # ---------------------------------------------------------------------------
-# Family Liaison
+# Family Liaison — no telephony: park as waiting
 # ---------------------------------------------------------------------------
 
 
-def test_preference_call_writes_facts_and_communication(session, case, chat_log, ehr_log, monkeypatch):
-    stub_call(monkeypatch, CallResult(
-        transcript="Placer: Hi...\nFamily: ...",
-        outcome="Family prefers home with daughter as caregiver",
-        answers={PREFERENCE_QUESTIONS[0]: "Home with her daughter", PREFERENCE_QUESTIONS[2]: "No SNF far from Oakland"},
-        follow_up_needed=False,
-        notes="Daughter works weekdays",
-    ))
+def test_preference_call_waits_on_telephony_no_invented_preferences(session, case, chat_log, ehr_log):
     result = run_task(session, make_task(session, case, "preference_call"))
-    profile = case.facts["preference_profile"]
-    assert profile["answers"][PREFERENCE_QUESTIONS[0]] == "Home with her daughter"
-    assert result["preference_profile"] == profile
-    assert case.dirty is True
-    comm = ehr_log["comms"][0]
-    assert comm["party_type"] == "family"
-    assert comm["transcript"].startswith("Placer:")
-    assert any("Home with her daughter" in m["content"] for m in chat_log)
-    assert ehr_log["actors"] == ["agent:family-liaison"]
+    assert_waiting_on_telephony(result)
+    session.refresh(case)
+    assert (case.facts or {}).get("preference_profile") is None
+    assert case.dirty is False
+    assert ehr_log["comms"] == []
+    assert chat_log == []  # the loop posts the single waiting note, not the worker
 
 
 # ---------------------------------------------------------------------------
-# Coverage
+# Coverage — asks the team, never invents a payer verdict
 # ---------------------------------------------------------------------------
 
 
-def test_verify_benefits_clears_payer_barrier_when_clean(session, case, chat_log, ehr_log, monkeypatch):
-    from placer.workers.coverage import BenefitsCheck
-
+def test_verify_benefits_asks_team_and_waits(session, case, chat_log, ehr_log):
     payer = Barrier(case_id=case.id, pathway_ids=[11], dimension="payer",
                     btype="auth_pending", status="open")
     session.add(payer)
     session.commit()
-    monkeypatch.setattr("placer.llm.structured", lambda prompt, schema, **kw: BenefitsCheck(
-        covered=True, auth_required=False, network_note="in-network SNFs", reference="PAY-123"))
     result = run_task(session, make_task(session, case, "verify_benefits", {"pathway_ids": [11]}))
-    assert payer.status == "cleared"
-    assert result["covered"] is True and result["barriers_cleared"] == 1
-    assert ehr_log["comms"][0]["party_type"] == "insurance"
-
-
-def test_verify_benefits_auth_needed_keeps_barrier_open(session, case, chat_log, ehr_log, monkeypatch):
-    from sqlmodel import select
-    from placer.workers.coverage import BenefitsCheck
-
-    monkeypatch.setattr("placer.llm.structured", lambda prompt, schema, **kw: BenefitsCheck(
-        covered=True, auth_required=True, network_note=None, reference="PAY-9"))
-    result = run_task(session, make_task(session, case, "verify_benefits", {"pathway_ids": [11]}))
-    assert result["barriers_cleared"] == 0
-    barrier = session.exec(select(Barrier).where(Barrier.case_id == case.id,
-                                                 Barrier.dimension == "payer")).first()
-    assert barrier is not None and barrier.status == "open"
-    assert "authorization" in barrier.description
+    assert result["waiting_on"] == "team"
+    assert result["chat_posted"] is True
+    assert result["levels"] == ["SNF / subacute / TCU"]
+    session.refresh(payer)
+    assert payer.status == "open"  # barrier untouched — no invented verdict
+    assert ehr_log["comms"] == []  # no fabricated payer communication
+    # Exactly ONE chat note, routed as a question for a human.
+    assert len(chat_log) == 1
+    assert chat_log[0]["kind"] == "text"
+    assert "needs a human" in chat_log[0]["content"]
+    assert "verify payer benefits" in chat_log[0]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -387,16 +369,16 @@ def test_verify_benefits_auth_needed_keeps_barrier_open(session, case, chat_log,
 # ---------------------------------------------------------------------------
 
 
-def test_book_transport_clears_transport_barrier(session, case, chat_log, ehr_log, monkeypatch):
+def test_book_transport_waits_on_telephony_barrier_stays(session, case, chat_log, ehr_log):
     barrier = Barrier(case_id=case.id, dimension="transport", btype="no_ride", status="open")
     session.add(barrier)
     session.commit()
-    stub_call(monkeypatch, CallResult(
-        transcript="t", outcome="Booked wheelchair van for Friday 10am", answers={}, notes=""))
     result = run_task(session, make_task(session, case, "book_transport"))
-    assert barrier.status == "cleared"
-    assert result["booking_ref"].startswith("TRN-")
-    assert result["barriers_cleared"] == 1
+    assert_waiting_on_telephony(result)
+    assert "booking_ref" not in result  # no invented booking reference
+    session.refresh(barrier)
+    assert barrier.status == "open"
+    assert ehr_log["comms"] == []
 
 
 def test_message_team_posts_plain_text_chat(session, case, chat_log, ehr_log):
