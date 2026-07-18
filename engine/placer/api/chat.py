@@ -403,6 +403,52 @@ def commit_case(
     return {"case_id": case_id, "pathway_id": body.pathway_id, "result": result}
 
 
+class BarrierClearIn(BaseModel):
+    resolved_by: str
+    note: Optional[str] = None
+
+
+@router.post(
+    "/cases/{case_id}/barriers/{barrier_id}/clear",
+    summary="Clear a barrier as a human action (e.g. attest medical readiness)",
+    description=(
+        "The human gate for barriers agents must never clear themselves — "
+        "medical readiness (a clinician attests, catalog DIB-017), decision, "
+        "and clinical_docs. Marks the barrier cleared with the resolver in its "
+        "evidence trail, posts a chat note, and marks the case dirty so the "
+        "next assessment can derive readiness (green)."
+    ),
+)
+def clear_barrier(
+    case_id: str, barrier_id: str, body: BarrierClearIn,
+    session: Session = Depends(get_session),
+) -> dict:
+    case = session.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"Unknown case '{case_id}'")
+    barrier = session.get(Barrier, barrier_id)
+    if barrier is None or barrier.case_id != case_id:
+        raise HTTPException(status_code=404, detail=f"Unknown barrier '{barrier_id}' for case")
+    if barrier.status == "cleared":
+        raise HTTPException(status_code=409, detail="Barrier is already cleared")
+    barrier.status = "cleared"
+    stamp = f"Cleared by {body.resolved_by}"
+    if body.note:
+        stamp += f": {body.note}"
+    barrier.evidence = f"{barrier.evidence or ''}\n{stamp}".strip()
+    session.add(barrier)
+    post_message(
+        session,
+        f"{body.resolved_by} cleared barrier '{barrier.btype}' ({barrier.dimension})"
+        + (f" — {body.note}" if body.note else ""),
+        case_id=case_id, kind="notification", author="placer",
+    )
+    case.dirty = True
+    session.add(case)
+    session.commit()
+    return {"barrier_id": barrier_id, "status": "cleared", "dimension": barrier.dimension}
+
+
 # ---------------------------------------------------------------------------
 # Board endpoints
 # ---------------------------------------------------------------------------
