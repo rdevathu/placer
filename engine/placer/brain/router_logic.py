@@ -14,16 +14,20 @@ to ``placer.workers.run_task``; use ``decode_payload`` anywhere else.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from placer import config
 from placer.models import Approval, Barrier, Case, DispoTask, Referral
 from placer.registry import load_pathways
 
 from .chatlink import post_chat
+
+logger = logging.getLogger(__name__)
 
 # Pathways whose destination is a facility bed that must be found and won.
 FACILITY_BOUND_PATHWAYS = {8, 11, 12, 14}
@@ -59,6 +63,52 @@ class TaskSpec:
     pathway_ids: Optional[list] = None  # None/[] = shared across pathways
     barrier_id: Optional[str] = None
     referral_id: Optional[str] = None
+
+
+# Engine task_type -> Iliad CareTask TaskType (models/enums.py) for the
+# worklist mirror shown in the EHR's Placer tab.
+_EHR_TASK_TYPE = {
+    "build_shortlist": "call_snf",
+    "facility_intake_call": "call_snf",
+    "facility_screen_call": "call_snf",
+    "submit_referral": "call_snf",
+    "finalize_acceptance": "call_snf",
+    "preference_call": "call_family",
+    "draft_order": "order_lab",
+    "draft_consult": "draft_consult",
+    "verify_benefits": "verify_eligibility",
+    "book_transport": "arrange_transport",
+    "chart_audit": "other",
+    "message_team": "other",
+}
+
+
+def mirror_task_to_ehr(session: Session, case: Case, task: DispoTask) -> None:
+    """Best-effort: create the matching EHR care task and remember its id in
+    the task's detail JSON ('ehr_care_task_id') so the executor can complete it
+    later. Mirror failure must NEVER break planning."""
+    if not config.PLACER_MIRROR:
+        return
+    try:
+        from placer.ehr_client import EHRClient
+
+        client = EHRClient()
+        try:
+            ehr_task = client.create_care_task(
+                patient_id=case.patient_id,
+                task_type=_EHR_TASK_TYPE.get(task.task_type, "other"),
+                title=task.title,
+                encounter_id=case.encounter_id,
+            )
+        finally:
+            client.close()
+        payload = decode_payload(task)
+        payload["ehr_care_task_id"] = ehr_task.get("id")
+        task.detail = json.dumps(payload)
+        session.add(task)
+        session.commit()
+    except Exception:
+        logger.warning("router: EHR care-task mirror failed for task %s", task.id, exc_info=True)
 
 
 def decode_payload(task: DispoTask) -> dict:
@@ -254,6 +304,7 @@ def persist_plan(session: Session, case: Case, specs: List[TaskSpec]) -> dict:
             session.rollback()
             continue
         created_ids.append(task.id)
+        mirror_task_to_ehr(session, case, task)
         if status == "suggested":
             suggested.append(task)
 

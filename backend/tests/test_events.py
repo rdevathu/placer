@@ -97,3 +97,22 @@ def test_patient_id_filter(client, fresh_db):
     assert [e["event_type"] for e in a] == ["communication.created"]
     b = client.get("/events", params={"patient_id": "hero-b-chf"}).json()
     assert [e["event_type"] for e in b] == ["care_task.created"]
+
+
+def test_provider_placer_message_emits_event(client, fresh_db):
+    r = client.post(
+        "/patients/hero-a-stroke/placer/messages",
+        json={"sender": "provider", "sender_name": "Dr. Feld", "text": "Family prefers rehab close to home"},
+    )
+    assert r.status_code == 201
+    msg = r.json()
+
+    events = client.get("/events", params={"patient_id": "hero-a-stroke"}).json()
+    assert [e["event_type"] for e in events] == ["placer_message.created"]
+    evt = events[0]
+    assert evt["actor"] == "provider"
+    assert evt["entity_type"] == "placer_message"
+    assert evt["entity_id"] == msg["id"]
+    assert evt["payload"]["sender"] == "provider"
+    assert evt["payload"]["sender_name"] == "Dr. Feld"
+    assert evt["payload"]["text"] == "Family prefers rehab close to home"

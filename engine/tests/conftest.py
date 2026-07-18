@@ -19,6 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 _TMP_DB = os.path.join(tempfile.mkdtemp(prefix="placer-test-"), "test.db")
 os.environ["PLACER_DB_PATH"] = _TMP_DB
+# Tests are offline: never mirror chat/tasks to a (possibly running) EHR.
+# Mirror tests re-enable via monkeypatch on placer.config.PLACER_MIRROR.
+os.environ["PLACER_MIRROR"] = "false"
 
 from placer.db import engine, reset_db  # noqa: E402
 from sqlmodel import Session  # noqa: E402

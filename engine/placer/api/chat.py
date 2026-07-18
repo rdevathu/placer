@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,6 +46,11 @@ from ..state import READINESS_DIMENSIONS, derive_readiness
 
 router = APIRouter(tags=["chat"])
 
+logger = logging.getLogger(__name__)
+
+# Chat kinds worth showing in the Iliad Placer tab (rich board kinds are not).
+_MIRRORABLE_KINDS = {"text", "notification", "approval_card"}
+
 
 # ---------------------------------------------------------------------------
 # Contract helper (imported by brain/workers — see INTERFACES.md)
@@ -70,7 +76,37 @@ def post_message(
         approval_id=approval_id,
     )
     session.add(msg)
+    _mirror_to_ehr(session, msg)
     return msg
+
+
+def _mirror_to_ehr(session: Session, msg: ChatMessage) -> None:
+    """Best-effort mirror of Placer-authored chat into the Iliad Placer tab.
+
+    Only placer-authored kinds in _MIRRORABLE_KINDS go out; team-authored
+    messages (author 'team:*', including provider messages the loop mirrored IN
+    from Iliad) are never bounced back — that would loop. Never raises."""
+    from placer import config
+
+    if not config.PLACER_MIRROR:
+        return
+    if msg.case_id is None or not msg.content or msg.kind not in _MIRRORABLE_KINDS:
+        return
+    if not (msg.author or "").startswith("placer"):
+        return
+    try:
+        case = session.get(Case, msg.case_id)
+        if case is None or not case.patient_id:
+            return
+        from placer.ehr_client import EHRClient
+
+        client = EHRClient()
+        try:
+            client.create_placer_message(case.patient_id, msg.content)
+        finally:
+            client.close()
+    except Exception:
+        logger.warning("chat: EHR placer-message mirror failed", exc_info=True)
 
 
 def _actions():

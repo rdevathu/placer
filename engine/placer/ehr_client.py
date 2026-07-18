@@ -52,6 +52,10 @@ class EHRClient:
         """The inpatient worklist: patients with an in-progress encounter."""
         return self._get("/patients", params={"admitted": True})
 
+    def get_patient(self, patient_id: str) -> dict:
+        """One patient with computed age. ``GET /patients/{id}``."""
+        return self._get(f"/patients/{patient_id}")
+
     def get_chart(self, patient_id: str) -> dict:
         """One-call chart snapshot (demographics, problems, meds, labs, dispo...)."""
         return self._get(f"/patients/{patient_id}/chart")
@@ -176,6 +180,27 @@ class EHRClient:
             "summary": summary,
             "transcript": transcript,
             "outcome": outcome,
+        })
+
+    # -- placer chat (provider <-> Placer thread rendered in the Iliad UI) ----
+
+    def list_placer_messages(self, patient_id: str) -> list:
+        """Chronological provider<->Placer thread. ``GET /patients/{id}/placer/messages``."""
+        return self._get(f"/patients/{patient_id}/placer/messages")
+
+    def create_placer_message(
+        self,
+        patient_id: str,
+        text: str,
+        sender: str = "placer",
+        sender_name: str = "Placer",
+    ) -> dict:
+        """POST /patients/{id}/placer/messages — no auto-reply is generated.
+        Field names match backend ``PlacerMessageCreate``."""
+        return self._write("POST", f"/patients/{patient_id}/placer/messages", {
+            "sender": sender,
+            "sender_name": sender_name,
+            "text": text,
         })
 
     # -- facilities ----------------------------------------------------------

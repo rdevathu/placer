@@ -35,6 +35,10 @@ POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "3"))
 # Writes to the EHR are attributed as '<ACTOR_PREFIX>:<agent-name>' via X-Actor.
 ACTOR_PREFIX = os.environ.get("ACTOR_PREFIX", "agent")
 
+# Mirror engine chat/tasks into the Iliad "Placer" tab (placer_messages +
+# care_tasks). Best-effort: mirror failures never break the loop or workers.
+PLACER_MIRROR = os.environ.get("PLACER_MIRROR", "true").lower() in {"1", "true", "yes"}
+
 # Echo SQL when debugging.
 SQL_ECHO = os.environ.get("PLACER_SQL_ECHO", "").lower() in {"1", "true", "yes"}
 

@@ -116,6 +116,10 @@ def _route_event(session: Session, ev: dict) -> None:
     event_type = ev.get("event_type") or ""
     actor = ev.get("actor") or ""
 
+    if event_type == "placer_message.created":
+        _route_placer_message(session, ev)
+        return
+
     if event_type == "patient.admitted" and patient_id:
         case = _find_case(session, patient_id)
         if case is None:
@@ -142,6 +146,36 @@ def _route_event(session: Session, ev: dict) -> None:
     verdict = watchman.is_material(ev, case.brief or "")
     if verdict.material:
         _mark_dirty(session, case)
+
+
+def _route_placer_message(session: Session, ev: dict) -> None:
+    """Inbound Iliad Placer-tab chat. Provider messages are mirrored into the
+    engine thread + team_notes and dirty the case (no Watchman — always
+    material); sender='placer' is the echo of our own outbound mirror."""
+    payload = ev.get("payload") or {}
+    if payload.get("sender") != "provider":
+        return  # our own mirrored message coming back around
+    patient_id = ev.get("patient_id")
+    if not patient_id:
+        return
+    case = _find_case(session, patient_id)
+    if case is None:
+        return
+    text = payload.get("text") or ""
+    author = "team:" + (payload.get("sender_name") or "provider")
+    try:
+        from placer.api.chat import post_message
+
+        post_message(session, text, case_id=case.id, author=author)
+    except ImportError:
+        logger.warning("brain: placer.api.chat unavailable; provider message not echoed to chat")
+    # JSON columns don't track in-place mutation — rebuild the dict.
+    facts = dict(case.facts or {})
+    notes = list(facts.get("team_notes") or [])
+    notes.append({"ts": utcnow().isoformat(), "author": author, "content": text})
+    facts["team_notes"] = notes
+    case.facts = facts
+    _mark_dirty(session, case)
 
 
 def _heartbeat(session: Session) -> None:
@@ -214,8 +248,9 @@ def _execute_tasks(session: Session, ehr: EHRClient) -> None:
         session.add(task)
         session.commit()
         # Workers read parameters off task.payload (stored as JSON in detail —
-        # see router_logic docstring). Instance attribute, not a column.
-        task.payload = router_logic.decode_payload(task)
+        # see router_logic docstring). Instance attribute, not a column —
+        # pydantic v2 rejects plain setattr on undeclared fields, so go around.
+        object.__setattr__(task, "payload", router_logic.decode_payload(task))
         try:
             result = run_task(session, task)
             task.status = "done"
@@ -228,6 +263,7 @@ def _execute_tasks(session: Session, ehr: EHRClient) -> None:
         task.updated_at = utcnow()
         session.add(task)
         session.commit()
+        _mirror_task_outcome(task)
         touched_cases.add(task.case_id)
 
     for cid in touched_cases:
@@ -236,6 +272,30 @@ def _execute_tasks(session: Session, ehr: EHRClient) -> None:
             _mark_dirty(session, case)
     if touched_cases:
         session.commit()
+
+
+def _mirror_task_outcome(task: DispoTask) -> None:
+    """Best-effort: reflect a finished engine task onto its mirrored EHR care
+    task (created by router_logic.persist_plan; id lives in the detail JSON).
+    Mirror failure must NEVER break the executor."""
+    if not config.PLACER_MIRROR:
+        return
+    try:
+        ehr_id = router_logic.decode_payload(task).get("ehr_care_task_id")
+        if not ehr_id:
+            return
+        import json
+
+        result = task.result
+        summary = (json.dumps(result) if isinstance(result, dict) else str(result or ""))[:500]
+        status = "completed" if task.status == "done" else "blocked"
+        client = EHRClient(actor=f"{config.ACTOR_PREFIX}:placer")
+        try:
+            client.update_care_task(ehr_id, status=status, result_summary=summary)
+        finally:
+            client.close()
+    except Exception:
+        logger.warning("brain: EHR care-task mirror failed for task %s", task.id, exc_info=True)
 
 
 def _escalate_failure(session: Session, task: DispoTask, exc: Exception) -> None:
