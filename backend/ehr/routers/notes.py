@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import Note, Patient
 from ..models.base import new_id, utcnow
 from ..schemas import NoteCreate, NoteUpdate
@@ -43,7 +44,11 @@ def get_note(note_id: str, session: Session = Depends(get_session), include_raw:
     summary="Write a note (draft or signed)",
     description="Create a note. Defaults to `status=draft` (pended). Agents typically write draft consult/dispo notes for a clinician to review and sign.",
 )
-def create_note(body: NoteCreate, session: Session = Depends(get_session)) -> dict:
+def create_note(
+    body: NoteCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     note = Note(
         id=new_id(),
         patient_id=body.patient_id,
@@ -58,6 +63,9 @@ def create_note(body: NoteCreate, session: Session = Depends(get_session)) -> di
         signed_at=utcnow() if body.status.value == "signed" else None,
     )
     session.add(note)
+    _note_event(session, "note.created", note, actor)
+    if note.status == "signed":
+        _note_event(session, "note.signed", note, actor)
     session.commit()
     session.refresh(note)
     return serialize(note)
@@ -78,7 +86,12 @@ def update_note(note_id: str, body: NoteUpdate, session: Session = Depends(get_s
 
 
 @router.post("/notes/{note_id}/sign", summary="Sign a note")
-def sign_note(note_id: str, signed_by: str = Query(..., description="Name of the signer"), session: Session = Depends(get_session)) -> dict:
+def sign_note(
+    note_id: str,
+    signed_by: str = Query(..., description="Name of the signer"),
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     note = get_or_404(session, Note, note_id, "Note")
     now = utcnow()
     note.status = "signed"
@@ -86,6 +99,19 @@ def sign_note(note_id: str, signed_by: str = Query(..., description="Name of the
     note.signed_at = now
     note.updated_at = now
     session.add(note)
+    _note_event(session, "note.signed", note, actor)
     session.commit()
     session.refresh(note)
     return serialize(note)
+
+
+def _note_event(session: Session, event_type: str, note: Note, actor: str) -> None:
+    record_event(
+        session,
+        event_type,
+        patient_id=note.patient_id,
+        actor=actor,
+        entity_type="note",
+        entity_id=note.id,
+        payload={"note_type": note.note_type, "status": note.status, "title": note.title},
+    )

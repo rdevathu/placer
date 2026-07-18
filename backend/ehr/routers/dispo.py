@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import DispoAssessment, Facility, Patient
 from ..models.base import new_id, utcnow
 from ..schemas import DispoAssessmentCreate, FacilityCreate, FacilityUpdate
@@ -54,7 +55,11 @@ def current_dispo(patient_id: str, session: Session = Depends(get_session)) -> O
         "assessment (sets its is_current=false), preserving the full history."
     ),
 )
-def create_dispo(body: DispoAssessmentCreate, session: Session = Depends(get_session)) -> dict:
+def create_dispo(
+    body: DispoAssessmentCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     # Supersede prior current assessment for this patient.
     prior = session.exec(
         select(DispoAssessment).where(
@@ -78,6 +83,15 @@ def create_dispo(body: DispoAssessmentCreate, session: Session = Depends(get_ses
         is_current=True,
     )
     session.add(row)
+    record_event(
+        session,
+        "dispo_assessment.created",
+        patient_id=row.patient_id,
+        actor=actor,
+        entity_type="dispo_assessment",
+        entity_id=row.id,
+        payload={"predicted_disposition": row.predicted_disposition, "confidence": row.confidence},
+    )
     session.commit()
     session.refresh(row)
     return serialize(row)
@@ -141,12 +155,26 @@ def create_facility(body: FacilityCreate, session: Session = Depends(get_session
     summary="Update a facility (e.g. bed count after a call)",
     description="Agents update available_beds and notes after calling a facility's admissions desk.",
 )
-def update_facility(facility_id: str, body: FacilityUpdate, session: Session = Depends(get_session)) -> dict:
+def update_facility(
+    facility_id: str,
+    body: FacilityUpdate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     fac = get_or_404(session, Facility, facility_id, "Facility")
-    for key, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
         setattr(fac, key, value)
     fac.updated_at = utcnow()
     session.add(fac)
+    record_event(
+        session,
+        "facility.updated",
+        actor=actor,
+        entity_type="facility",
+        entity_id=fac.id,
+        payload={"updated_fields": sorted(updates.keys()), "available_beds": fac.available_beds},
+    )
     session.commit()
     session.refresh(fac)
     return serialize(fac)

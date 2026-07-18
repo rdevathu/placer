@@ -7,6 +7,7 @@ from . import (
     conditions,
     dispo,
     encounters,
+    events,
     medications,
     notes,
     observations,
@@ -26,5 +27,6 @@ all_routers = [
     dispo.router,
     care_tasks.router,
     communications.router,
+    events.router,
     admin.router,
 ]
