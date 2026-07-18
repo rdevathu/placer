@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import Medication, Observation, Order
 from ..models.base import new_id, utcnow
 from ..schemas import OrderCreate, OrderSign, OrderUpdate
@@ -61,7 +62,11 @@ def get_order(order_id: str, session: Session = Depends(get_session)) -> dict:
         "is signed, a pending Observation is created automatically and linked."
     ),
 )
-def create_order(body: OrderCreate, session: Session = Depends(get_session)) -> dict:
+def create_order(
+    body: OrderCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     now = utcnow()
     order = Order(
         id=new_id(),
@@ -80,6 +85,9 @@ def create_order(body: OrderCreate, session: Session = Depends(get_session)) -> 
         order.signed_at = now
         _materialize_lab(session, order)
     session.add(order)
+    _order_event(session, "order.created", order, actor)
+    if order.status == "signed":
+        _order_event(session, "order.signed", order, actor)
     session.commit()
     session.refresh(order)
     return serialize(order)
@@ -104,7 +112,12 @@ def update_order(order_id: str, body: OrderUpdate, session: Session = Depends(ge
     summary="Sign a pended order",
     description="Moves a draft order to `signed` (active). For lab orders this creates the pending result.",
 )
-def sign_order(order_id: str, body: OrderSign, session: Session = Depends(get_session)) -> dict:
+def sign_order(
+    order_id: str,
+    body: OrderSign,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     order = get_or_404(session, Order, order_id, "Order")
     if order.status not in ("draft",):
         raise HTTPException(status_code=409, detail=f"Only draft orders can be signed; order is '{order.status}'")
@@ -115,6 +128,7 @@ def sign_order(order_id: str, body: OrderSign, session: Session = Depends(get_se
     order.updated_at = now
     _materialize_lab(session, order)
     session.add(order)
+    _order_event(session, "order.signed", order, actor)
     session.commit()
     session.refresh(order)
     return serialize(order)
@@ -125,7 +139,11 @@ def sign_order(order_id: str, body: OrderSign, session: Session = Depends(get_se
     summary="Complete / fulfill a signed order",
     description="Marks a signed order completed. If it is a lab order with a linked pending Observation, that result is marked final.",
 )
-def complete_order(order_id: str, session: Session = Depends(get_session)) -> dict:
+def complete_order(
+    order_id: str,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     order = get_or_404(session, Order, order_id, "Order")
     if order.status != "signed":
         raise HTTPException(status_code=409, detail=f"Only signed orders can be completed; order is '{order.status}'")
@@ -141,13 +159,18 @@ def complete_order(order_id: str, session: Session = Depends(get_session)) -> di
             obs.updated_at = now
             session.add(obs)
     session.add(order)
+    _order_event(session, "order.completed", order, actor)
     session.commit()
     session.refresh(order)
     return serialize(order)
 
 
 @router.post("/{order_id}/cancel", summary="Cancel an order")
-def cancel_order(order_id: str, session: Session = Depends(get_session)) -> dict:
+def cancel_order(
+    order_id: str,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     order = get_or_404(session, Order, order_id, "Order")
     if order.status in ("completed", "cancelled"):
         raise HTTPException(status_code=409, detail=f"Cannot cancel a '{order.status}' order")
@@ -160,9 +183,22 @@ def cancel_order(order_id: str, session: Session = Depends(get_session)) -> dict
             obs.status = "cancelled"
             session.add(obs)
     session.add(order)
+    _order_event(session, "order.cancelled", order, actor)
     session.commit()
     session.refresh(order)
     return serialize(order)
+
+
+def _order_event(session: Session, event_type: str, order: Order, actor: str) -> None:
+    record_event(
+        session,
+        event_type,
+        patient_id=order.patient_id,
+        actor=actor,
+        entity_type="order",
+        entity_id=order.id,
+        payload={"order_type": order.order_type, "status": order.status, "display": order.display},
+    )
 
 
 def _materialize_lab(session: Session, order: Order) -> None:

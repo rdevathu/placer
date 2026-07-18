@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import (
     CareTask,
     Condition,
@@ -167,7 +168,11 @@ def get_chart(patient_id: str, session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("", status_code=201, summary="Create a patient")
-def create_patient(body: PatientCreate, session: Session = Depends(get_session)) -> dict:
+def create_patient(
+    body: PatientCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     from datetime import date
 
     count = session.exec(select(func.count()).select_from(Patient)).one()
@@ -196,6 +201,15 @@ def create_patient(body: PatientCreate, session: Session = Depends(get_session))
         code_status=body.code_status,
     )
     session.add(patient)
+    record_event(
+        session,
+        "patient.created",
+        patient_id=patient.id,
+        actor=actor,
+        entity_type="patient",
+        entity_id=patient.id,
+        payload={"mrn": patient.mrn, "full_name": patient.full_name},
+    )
     session.commit()
     session.refresh(patient)
     return _patient_out(patient)

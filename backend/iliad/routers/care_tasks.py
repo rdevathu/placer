@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import CareTask
 from ..models.base import new_id, utcnow
 from ..schemas import CareTaskCreate, CareTaskUpdate
@@ -45,7 +46,11 @@ def get_task(task_id: str, session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("", status_code=201, summary="Create a care task")
-def create_task(body: CareTaskCreate, session: Session = Depends(get_session)) -> dict:
+def create_task(
+    body: CareTaskCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     task = CareTask(
         id=new_id(),
         patient_id=body.patient_id,
@@ -61,6 +66,15 @@ def create_task(body: CareTaskCreate, session: Session = Depends(get_session)) -
         related_order_id=body.related_order_id,
     )
     session.add(task)
+    record_event(
+        session,
+        "care_task.created",
+        patient_id=task.patient_id,
+        actor=actor,
+        entity_type="care_task",
+        entity_id=task.id,
+        payload={"task_type": task.task_type, "status": task.status, "title": task.title},
+    )
     session.commit()
     session.refresh(task)
     return serialize(task)
@@ -71,7 +85,12 @@ def create_task(body: CareTaskCreate, session: Session = Depends(get_session)) -
     summary="Update a care task (status, result)",
     description="Move a task through pending -> in_progress -> completed and record the result_summary (e.g. the outcome of a call).",
 )
-def update_task(task_id: str, body: CareTaskUpdate, session: Session = Depends(get_session)) -> dict:
+def update_task(
+    task_id: str,
+    body: CareTaskUpdate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     task = get_or_404(session, CareTask, task_id, "CareTask")
     updates = body.model_dump(exclude_unset=True)
     for key, value in updates.items():
@@ -80,6 +99,15 @@ def update_task(task_id: str, body: CareTaskUpdate, session: Session = Depends(g
         task.completed_at = utcnow()
     task.updated_at = utcnow()
     session.add(task)
+    record_event(
+        session,
+        "care_task.updated",
+        patient_id=task.patient_id,
+        actor=actor,
+        entity_type="care_task",
+        entity_id=task.id,
+        payload={"task_type": task.task_type, "status": task.status, "updated_fields": sorted(updates.keys())},
+    )
     session.commit()
     session.refresh(task)
     return serialize(task)

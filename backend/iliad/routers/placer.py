@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import record_event
 from ..models import Patient, PlacerMessage
 from ..models.base import new_id
 from ..schemas import PlacerMessageCreate
@@ -70,6 +71,17 @@ def create_message(
         text=body.text,
     )
     session.add(msg)
+    # Actor is the sender, not X-Actor: the engine keys its echo suppression on
+    # payload.sender ('placer' = its own mirror), providers post header-less.
+    record_event(
+        session,
+        "placer_message.created",
+        patient_id=patient_id,
+        actor=body.sender.value,
+        entity_type="placer_message",
+        entity_id=msg.id,
+        payload={"sender": body.sender.value, "sender_name": body.sender_name, "text": body.text[:500]},
+    )
     session.commit()
     session.refresh(msg)
     return serialize(msg)

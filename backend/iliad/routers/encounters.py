@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import Encounter, Patient
 from ..models.base import new_id, utcnow
 from ..schemas import EncounterCreate, EncounterUpdate
@@ -51,7 +52,11 @@ def get_encounter(encounter_id: str, session: Session = Depends(get_session), in
 
 
 @router.post("/encounters", status_code=201, summary="Create/admit an encounter")
-def create_encounter(body: EncounterCreate, session: Session = Depends(get_session)) -> dict:
+def create_encounter(
+    body: EncounterCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     enc = Encounter(
         id=new_id(),
         patient_id=body.patient_id,
@@ -65,6 +70,17 @@ def create_encounter(body: EncounterCreate, session: Session = Depends(get_sessi
         attending_name=body.attending_name,
     )
     session.add(enc)
+    # An in-progress admission is the trigger the dispo agents care about.
+    if enc.status == "in-progress":
+        record_event(
+            session,
+            "patient.admitted",
+            patient_id=enc.patient_id,
+            actor=actor,
+            entity_type="encounter",
+            entity_id=enc.id,
+            payload={"class_code": enc.class_code, "reason_text": enc.reason_text},
+        )
     session.commit()
     session.refresh(enc)
     return serialize(enc)

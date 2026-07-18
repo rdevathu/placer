@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from ..db import get_session
+from ..events import get_actor, record_event
 from ..models import Communication
 from ..models.base import new_id, utcnow
 from ..schemas import CommunicationCreate
@@ -47,7 +48,11 @@ def get_comm(comm_id: str, session: Session = Depends(get_session)) -> dict:
     summary="Log a communication (e.g. a phone call)",
     description="Record an outbound/inbound call or message with a summary, transcript, and outcome. Used to audit the proactive dispo work.",
 )
-def create_comm(body: CommunicationCreate, session: Session = Depends(get_session)) -> dict:
+def create_comm(
+    body: CommunicationCreate,
+    session: Session = Depends(get_session),
+    actor: str = Depends(get_actor),
+) -> dict:
     comm = Communication(
         id=new_id(),
         patient_id=body.patient_id,
@@ -63,6 +68,15 @@ def create_comm(body: CommunicationCreate, session: Session = Depends(get_sessio
         occurred_at=body.occurred_at or utcnow(),
     )
     session.add(comm)
+    record_event(
+        session,
+        "communication.created",
+        patient_id=comm.patient_id,
+        actor=actor,
+        entity_type="communication",
+        entity_id=comm.id,
+        payload={"modality": comm.modality, "party_type": comm.party_type, "outcome": comm.outcome},
+    )
     session.commit()
     session.refresh(comm)
     return serialize(comm)
