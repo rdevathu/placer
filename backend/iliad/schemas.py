@@ -29,8 +29,14 @@ class PatientCreate(BaseModel):
     birth_date: Optional[str] = Field(default=None, description="YYYY-MM-DD")
     marital_status: Optional[str] = None
     language: Optional[str] = None
+    phone: Optional[str] = None
+    address_line: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
+    postal_code: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = Field(default=None, description="e.g. spouse, daughter, son, friend")
+    emergency_contact_phone: Optional[str] = None
     living_situation: Optional[str] = None
     code_status: Optional[str] = None
 
@@ -38,6 +44,12 @@ class PatientCreate(BaseModel):
 class PatientUpdate(BaseModel):
     family_name: Optional[str] = None
     given_name: Optional[str] = None
+    phone: Optional[str] = None
+    address_line: Optional[str] = None
+    postal_code: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
     living_situation: Optional[str] = Field(default=None, description="lives_alone | lives_with_family | facility")
     code_status: Optional[str] = Field(default=None, description="full | DNR | DNI | comfort")
     deceased: Optional[bool] = None
@@ -277,3 +289,14 @@ class CommunicationCreate(BaseModel):
     transcript: Optional[str] = None
     outcome: Optional[str] = Field(default=None, description="e.g. bed_available | declined | callback | preference_captured")
     occurred_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Placer chat
+# ---------------------------------------------------------------------------
+
+
+class PlacerMessageCreate(BaseModel):
+    sender: enums.PlacerMessageSender = enums.PlacerMessageSender.provider
+    sender_name: Optional[str] = Field(default=None, description="Display name shown on the message")
+    text: str = Field(description="Message body (plain text)")

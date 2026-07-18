@@ -110,3 +110,18 @@ class Communication(TimestampMixin, table=True):
     outcome: Optional[str] = Field(default=None, description="e.g. bed_available | declined | callback | preference_captured")
 
     occurred_at: Optional[datetime] = None
+
+
+class PlacerMessage(TimestampMixin, table=True):
+    """One message in the per-patient chat thread between the care team and
+    Placer. ``created_at`` (from the mixin) is the timeline; threads render in
+    ascending created_at order."""
+
+    __tablename__ = "placer_messages"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    patient_id: str = Field(foreign_key="patients.id", index=True)
+
+    sender: str = Field(index=True, description="provider | placer")
+    sender_name: Optional[str] = Field(default=None, description="Display name, e.g. 'Dr. Priya Nadkarni' or 'Placer'")
+    text: str = Field(default="", sa_column=Column(Text))

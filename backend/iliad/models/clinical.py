@@ -35,8 +35,16 @@ class Patient(TimestampMixin, table=True):
 
     marital_status: Optional[str] = None
     language: Optional[str] = None
+    phone: Optional[str] = None
+    address_line: Optional[str] = Field(default=None, description="Street address; city/state/postal_code carried separately")
     city: Optional[str] = None
     state: Optional[str] = None
+    postal_code: Optional[str] = None
+
+    # Family / emergency contact (dispo-relevant: who to call about placement).
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_relationship: Optional[str] = Field(default=None, description="e.g. spouse, daughter, son, friend")
+    emergency_contact_phone: Optional[str] = None
 
     # Dispo-relevant social signal (typed, not buried in notes).
     living_situation: Optional[str] = Field(

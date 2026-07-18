@@ -24,6 +24,7 @@ from ..models import (
     Observation,
     Order,
     Patient,
+    PlacerMessage,
     Procedure,
 )
 from .facilities import seed_facilities
@@ -44,6 +45,7 @@ _COUNT_MODELS = {
     "facilities": Facility,
     "care_tasks": CareTask,
     "communications": Communication,
+    "placer_messages": PlacerMessage,
 }
 
 

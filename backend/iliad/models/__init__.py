@@ -16,7 +16,7 @@ from .clinical import (
     Patient,
     Procedure,
 )
-from .dispo import CareTask, Communication, DispoAssessment, Facility
+from .dispo import CareTask, Communication, DispoAssessment, Facility, PlacerMessage
 
 __all__ = [
     "Patient",
@@ -33,4 +33,5 @@ __all__ = [
     "Facility",
     "CareTask",
     "Communication",
+    "PlacerMessage",
 ]
