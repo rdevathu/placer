@@ -1,0 +1,7 @@
+# Placer EHR backend — runtime + test dependencies.
+# Pinned to what was validated; loosen if you upgrade Python beyond 3.9.
+fastapi==0.128.8
+uvicorn[standard]==0.39.0
+sqlmodel==0.0.34
+httpx==0.28.1          # used by TestClient
+pytest==8.4.2
