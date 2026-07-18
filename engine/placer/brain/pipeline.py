@@ -71,8 +71,11 @@ def _reconcile_barriers(session: Session, case: Case, ops: List[BarrierOp]) -> N
             if op.evidence:
                 barrier.evidence = op.evidence
             barrier.pathway_ids = op.pathway_ids or barrier.pathway_ids
-            if op.dimension not in _HUMAN_CLEARED_DIMENSIONS:
-                # Non-protected barriers may be re-opened / re-statused by GPS.
+            human_cleared = barrier.status == "cleared" and "Cleared by " in (barrier.evidence or "")
+            if op.dimension not in _HUMAN_CLEARED_DIMENSIONS and not human_cleared:
+                # Non-protected barriers may be re-opened / re-statused by GPS —
+                # but a human clear ("Cleared by <who>" stamped by the barrier
+                # endpoint) is an override that outlasts chart re-detection.
                 barrier.status = op.status or ("open" if barrier.status == "cleared" else barrier.status)
             barrier.updated_at = utcnow()
             session.add(barrier)
