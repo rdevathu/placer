@@ -292,6 +292,45 @@ class CommunicationCreate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Outbound calls (Bland)
+# ---------------------------------------------------------------------------
+
+
+class CallRequest(BaseModel):
+    """Place a real outbound phone call (via Bland) and log it as a communication.
+
+    Gate: Placer may place a call **autonomously only to a skilled-nursing
+    facility (SNF)** — i.e. ``party_type='snf'`` or a ``facility_id`` whose
+    facility is a SNF. Any other party (family, patient, PCP, insurance, …)
+    requires medical-team sign-off: set ``medical_team_approval`` to the name of
+    the authorizing clinician, otherwise the call is refused with HTTP 403.
+    """
+
+    patient_id: str
+    task: str = Field(
+        description="Instructions/script for the AI caller, e.g. 'Call the SNF admissions desk and ask if they have a Medicare bed for a 72yo post-stroke patient needing PT.'"
+    )
+    party_type: enums.PartyType = Field(
+        default=enums.PartyType.snf,
+        description="Who is being called. Only 'snf' is allowed without medical-team approval.",
+    )
+    party_name: Optional[str] = Field(default=None, description="Display name of the party, e.g. 'Maplewood SNF admissions'")
+    facility_id: Optional[str] = Field(default=None, description="If calling a facility, its id (its type is checked against the SNF gate).")
+    care_task_id: Optional[str] = Field(default=None, description="Care task this call is working.")
+    phone_number: Optional[str] = Field(
+        default=None,
+        description="Intended E.164 number. NOTE: for the demo every call is force-dialed to a fixed number regardless of this value.",
+    )
+    voice: Optional[str] = Field(default=None, description="Bland voice name; defaults to the configured voice.")
+    first_sentence: Optional[str] = Field(default=None, description="Opening line the agent says.")
+    max_duration: Optional[int] = Field(default=None, ge=1, description="Max call length in minutes.")
+    medical_team_approval: Optional[str] = Field(
+        default=None,
+        description="Name of the clinician authorizing a NON-SNF call. Required for any party_type other than 'snf'.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Placer chat
 # ---------------------------------------------------------------------------
 
