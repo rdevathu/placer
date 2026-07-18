@@ -8,3 +8,7 @@ registration pattern as the backend's ``routers/__init__.py``.
 from __future__ import annotations
 
 routers: list = []
+
+from .chat import router as chat_router  # noqa: E402
+
+routers.append(chat_router)

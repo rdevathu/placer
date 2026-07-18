@@ -6,6 +6,9 @@ The dummy EHR is a separate service (default http://localhost:8000).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
 from contextlib import asynccontextmanager
 
 import httpx
@@ -16,11 +19,23 @@ from . import config
 from .api import routers as api_routers
 from .db import init_db
 
+# The brain loop can be disabled (tests, frontend-only dev) via env.
+_LOOP_ENABLED = os.environ.get("PLACER_LOOP_ENABLED", "true").lower() in {"1", "true", "yes"}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    loop_task = None
+    if _LOOP_ENABLED:
+        from .brain.loop import engine_loop
+
+        loop_task = asyncio.create_task(engine_loop(), name="placer-brain-loop")
     yield
+    if loop_task is not None:
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
 
 
 app = FastAPI(

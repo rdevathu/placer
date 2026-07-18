@@ -232,6 +232,21 @@ class Run(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# EngineMeta — tiny key-value store for engine-global state (e.g. EHR cursor)
+# ---------------------------------------------------------------------------
+
+
+class EngineMeta(SQLModel, table=True):
+    """Engine-global scalars keyed by name. Currently: 'ehr_cursor' — the last
+    EHR event ``seq`` the brain loop has processed (stored as str)."""
+
+    __tablename__ = "engine_meta"
+
+    key: str = Field(primary_key=True)
+    value: str
+
+
+# ---------------------------------------------------------------------------
 # FacilityIntel — engine-side memory about facilities, layered over EHR data
 # ---------------------------------------------------------------------------
 
