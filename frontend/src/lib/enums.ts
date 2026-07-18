@@ -88,15 +88,16 @@ export const MEDICATION_STATUS = opts([
 ]);
 
 export const NOTE_TYPE = opts([
-  ["progress", "Progress"],
-  ["history_and_physical", "History & physical"],
-  ["discharge_summary", "Discharge summary"],
+  ["progress", "Progress Note"],
+  ["history_and_physical", "History & Physical"],
+  ["discharge_summary", "Discharge Summary"],
   ["consult", "Consult"],
-  ["case_management", "Case management"],
+  ["case_management", "Case Management"],
   ["nursing", "Nursing"],
-  ["social_work", "Social work"],
-  ["therapy", "Therapy (PT/OT/SLP)"],
-  ["after_visit_summary", "After-visit summary"],
+  ["social_work", "Social Work"],
+  ["therapy", "Therapy"],
+  ["family_communication", "Family Communication"],
+  ["after_visit_summary", "After Visit Summary"],
 ]);
 
 export const NOTE_STATUS = opts([

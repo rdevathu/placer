@@ -155,7 +155,7 @@ function CreateOrderModal({ patientId, open, onClose }: { patientId: string; ope
           <TextArea value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} />
         </Field>
         <Field label="Ordered by">
-          <TextInput value={form.ordered_by} onChange={(e) => setForm({ ...form, ordered_by: e.target.value })} placeholder="Placer or clinician name" />
+          <TextInput value={form.ordered_by} onChange={(e) => setForm({ ...form, ordered_by: e.target.value })} placeholder="Ordering clinician" />
         </Field>
         <label className="flex items-center gap-2 text-[12.5px] text-text">
           <input type="checkbox" checked={form.signNow} onChange={(e) => setForm({ ...form, signNow: e.target.checked })} className="h-3.5 w-3.5 accent-[var(--accent)]" />
