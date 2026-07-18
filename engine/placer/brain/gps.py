@@ -50,9 +50,57 @@ def _dump(obj: object) -> str:
     return json.dumps(obj, indent=1, default=str)
 
 
+# How much of each note body to feed the model. Recent notes carry the freshest
+# functional-status and goals-of-care signal (the chart snapshot has no notes at
+# all), but full H&Ps are long — cap per-note so the prompt stays bounded.
+_RECENT_NOTES = 6
+_NOTE_TEXT_CAP = 2000
+_RECENT_LABS = 15
+
+
+def _recent_notes(ehr: EHRClient, patient_id: str) -> list:
+    """The most recent note bodies, newest first, each truncated. The chart
+    aggregate omits notes entirely, so without this GPS never sees a new
+    clinician note (e.g. one documenting the patient is now safe for home)."""
+    try:
+        notes = ehr.list_notes(patient_id)[:_RECENT_NOTES]
+    except Exception:  # a notes-endpoint hiccup must not abort the assessment
+        return []
+    out = []
+    for n in notes:
+        text = n.get("text") or ""
+        if len(text) > _NOTE_TEXT_CAP:
+            text = text[:_NOTE_TEXT_CAP] + "… [truncated]"
+        out.append({
+            "note_type": n.get("note_type"), "title": n.get("title"),
+            "author_role": n.get("author_role"), "status": n.get("status"),
+            "created_at": n.get("created_at"), "text": text,
+        })
+    return out
+
+
+def _recent_labs(ehr: EHRClient, patient_id: str) -> list:
+    """Recent lab results, newest first — including *normal* ones. The chart
+    snapshot only carries pending + abnormal labs, so a normal resulted lab
+    (which can clear a pending-lab barrier) would otherwise be invisible."""
+    try:
+        labs = ehr.list_labs(patient_id)[:_RECENT_LABS]
+    except Exception:  # degrade gracefully; the chart still carries abnormal labs
+        return []
+    return [
+        {"display": l.get("display"), "value_num": l.get("value_num"),
+         "value_unit": l.get("value_unit"), "value_string": l.get("value_string"),
+         "status": l.get("status"), "abnormal_flag": l.get("abnormal_flag"),
+         "effective_time": l.get("effective_time")}
+        for l in labs
+    ]
+
+
 def assess(session: Session, case: Case, ehr: EHRClient) -> GpsAssessment:
     """Assemble full case context and run one structured GPS call."""
     chart = ehr.get_chart(case.patient_id)
+    notes = _recent_notes(ehr, case.patient_id)
+    labs = _recent_labs(ehr, case.patient_id)
 
     barriers = session.exec(
         select(Barrier).where(Barrier.case_id == case.id, Barrier.status.in_(_OPEN_BARRIER_STATUSES))  # type: ignore[attr-defined]
@@ -73,6 +121,12 @@ def assess(session: Session, case: Case, ehr: EHRClient) -> GpsAssessment:
         "",
         "## Chart snapshot",
         _dump(chart),
+        "",
+        "## Recent notes (newest first — read for functional status, goals of care, disposition intent)",
+        _dump(notes),
+        "",
+        "## Recent lab results (newest first — includes normal results)",
+        _dump(labs),
         "",
         "## Prior case brief",
         case.brief or "(first assessment — no prior brief)",

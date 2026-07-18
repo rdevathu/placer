@@ -25,6 +25,7 @@ RULES: dict = {
     "order.completed": True,
     "order.resulted": True,
     "order.created": True,  # routine clinician orders shift the clinical picture
+    "observation.resulted": True,  # a lab result landed (normal or abnormal) — may clear a barrier
     "care_task.updated": True,
     "care_task.created": False,
     "care_task.deleted": False,
