@@ -110,6 +110,7 @@ class NoteType(str, Enum):
     social_work = "social_work"
     therapy = "therapy"  # PT/OT/SLP eval
     after_visit_summary = "after_visit_summary"
+    family_communication = "family_communication"  # calls/discussions with family re: dispo preferences
 
 
 class NoteStatus(str, Enum):
