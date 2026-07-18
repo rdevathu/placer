@@ -20,7 +20,7 @@ router = APIRouter(tags=["notes"])
 def list_notes(
     patient_id: str,
     session: Session = Depends(get_session),
-    note_type: Optional[str] = Query(None, description="progress | history_and_physical | discharge_summary | consult | case_management | ..."),
+    note_type: Optional[str] = Query(None, description="progress | history_and_physical | discharge_summary | consult | case_management | family_communication | ..."),
     status: Optional[str] = Query(None, description="draft | signed"),
 ) -> list[dict]:
     get_or_404(session, Patient, patient_id, "Patient")

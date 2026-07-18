@@ -238,7 +238,7 @@ class Note(TimestampMixin, table=True):
     patient_id: str = Field(foreign_key="patients.id", index=True)
     encounter_id: Optional[str] = Field(default=None, foreign_key="encounters.id", index=True)
 
-    note_type: str = Field(default="progress", index=True, description="progress | history_and_physical | discharge_summary | consult | case_management | nursing | ...")
+    note_type: str = Field(default="progress", index=True, description="progress | history_and_physical | discharge_summary | consult | case_management | nursing | family_communication | ...")
     title: Optional[str] = None
     text: str = Field(default="", sa_column=Column(Text))
 
