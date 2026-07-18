@@ -121,6 +121,9 @@ def make_referral(session, case, facility_id="fac-1", name="Sunrise SNF", status
 
 
 def stub_call(monkeypatch, result: CallResult):
+    """Stub the call layer with a canned CallResult AND enable calls: a stubbed
+    call stands in for the simulated/twilio (PLACE_CALLS=True) path."""
+    monkeypatch.setattr("placer.config.PLACE_CALLS", True)
     made = []
 
     def fake_place_call(objective, questions, callee, context):
@@ -129,6 +132,13 @@ def stub_call(monkeypatch, result: CallResult):
 
     monkeypatch.setattr("placer.calls.place_call", fake_place_call)
     return made
+
+
+@pytest.fixture()
+def enabled_calls(monkeypatch):
+    """Turn on outbound calls for tests of the enabled (simulated) path that do
+    not go through ``stub_call`` (coverage/submit_referral read the flag)."""
+    monkeypatch.setattr("placer.config.PLACE_CALLS", True)
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +288,7 @@ def test_screen_call_from_terminal_state_raises(session, case, chat_log, ehr_log
         run_task(session, make_task(session, case, "facility_screen_call", {"referral_id": ref.id}))
 
 
-def test_submit_referral_generates_confirmation(session, case, chat_log, ehr_log):
+def test_submit_referral_generates_confirmation(session, case, chat_log, ehr_log, enabled_calls):
     ref = make_referral(session, case, status="screened")
     result = run_task(session, make_task(session, case, "submit_referral", {"referral_id": ref.id}))
     assert ref.status == "pending"
@@ -353,7 +363,7 @@ def test_preference_call_writes_facts_and_communication(session, case, chat_log,
 # ---------------------------------------------------------------------------
 
 
-def test_verify_benefits_clears_payer_barrier_when_clean(session, case, chat_log, ehr_log, monkeypatch):
+def test_verify_benefits_clears_payer_barrier_when_clean(session, case, chat_log, ehr_log, monkeypatch, enabled_calls):
     from placer.workers.coverage import BenefitsCheck
 
     payer = Barrier(case_id=case.id, pathway_ids=[11], dimension="payer",
@@ -368,7 +378,7 @@ def test_verify_benefits_clears_payer_barrier_when_clean(session, case, chat_log
     assert ehr_log["comms"][0]["party_type"] == "insurance"
 
 
-def test_verify_benefits_auth_needed_keeps_barrier_open(session, case, chat_log, ehr_log, monkeypatch):
+def test_verify_benefits_auth_needed_keeps_barrier_open(session, case, chat_log, ehr_log, monkeypatch, enabled_calls):
     from sqlmodel import select
     from placer.workers.coverage import BenefitsCheck
 
@@ -407,3 +417,96 @@ def test_message_team_posts_plain_text_chat(session, case, chat_log, ehr_log):
     assert chat_log[0]["kind"] == "text"
     assert "needs a human" in chat_log[0]["content"]
     assert "POLST" in chat_log[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Calls disabled (the NEW default): workers must PARK, never fabricate.
+#
+# No stub_call / enabled_calls here — config.PLACE_CALLS defaults False, so the
+# real place_call raises CallsDisabled (and coverage/submit read the flag).
+# The contract for every parked run: result {"parked": True}, NO communication
+# row, the relevant barrier stays OPEN, and no fabricated referral/bed state.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_benefits_parks_when_calls_disabled(session, case, chat_log, ehr_log, monkeypatch):
+    from sqlmodel import select
+
+    called = []
+    monkeypatch.setattr("placer.llm.structured",
+                        lambda *a, **k: called.append(1))  # must NOT be invoked
+    payer = Barrier(case_id=case.id, pathway_ids=[11], dimension="payer",
+                    btype="auth_pending", status="open")
+    session.add(payer)
+    session.commit()
+
+    result = run_task(session, make_task(session, case, "verify_benefits", {"pathway_ids": [11]}))
+    assert result["parked"] is True and result["reason"] == "calls_disabled"
+    assert called == []                    # no payer role-play
+    assert ehr_log["comms"] == []          # no fabricated communication
+    session.refresh(payer)
+    assert payer.status == "open"          # barrier left open
+
+
+def test_book_transport_parks_when_calls_disabled(session, case, chat_log, ehr_log):
+    barrier = Barrier(case_id=case.id, dimension="transport", btype="no_ride", status="open")
+    session.add(barrier)
+    session.commit()
+
+    result = run_task(session, make_task(session, case, "book_transport"))
+    assert result["parked"] is True
+    assert "booking_ref" not in result
+    assert ehr_log["comms"] == []
+    session.refresh(barrier)
+    assert barrier.status == "open"        # transport barrier not cleared
+
+
+def test_preference_call_parks_when_calls_disabled(session, case, chat_log, ehr_log):
+    result = run_task(session, make_task(session, case, "preference_call"))
+    assert result["parked"] is True
+    assert ehr_log["comms"] == []
+    session.refresh(case)
+    assert "preference_profile" not in (case.facts or {})  # nothing fabricated
+
+
+def test_facility_intake_parks_and_is_idempotent_when_calls_disabled(session, case, chat_log, ehr_log):
+    from sqlmodel import select
+
+    ref = make_referral(session, case, status="shortlisted")
+
+    # Invoke repeatedly while parked — must not accumulate rows or advance state.
+    for _ in range(3):
+        result = run_task(session, make_task(session, case, "facility_intake_call", {"referral_id": ref.id}))
+        assert result["parked"] is True
+    session.refresh(ref)
+    assert ref.status == "shortlisted"         # no advance to intake_verified
+    assert ehr_log["comms"] == []              # no facility communication
+    assert ehr_log["facility_updates"] == []   # no fabricated bed count
+    assert len(session.exec(select(FacilityIntel)).all()) == 0
+    assert len(session.exec(select(Referral).where(Referral.case_id == case.id)).all()) == 1
+
+
+def test_finalize_acceptance_parks_when_calls_disabled(session, case, chat_log, ehr_log):
+    ref = make_referral(session, case, status="pending")
+    dest = Barrier(case_id=case.id, pathway_ids=[11], dimension="destination",
+                   btype="no_bed_secured", status="open")
+    session.add(dest)
+    session.commit()
+
+    result = run_task(session, make_task(session, case, "finalize_acceptance", {"referral_id": ref.id}))
+    assert result["parked"] is True
+    assert ehr_log["comms"] == []
+    assert ehr_log["facility_updates"] == []   # no bed decrement
+    session.refresh(ref)
+    assert ref.status == "pending" and ref.bed_hold_expires is None
+    session.refresh(dest)
+    assert dest.status == "open"               # destination barrier not cleared
+
+
+def test_submit_referral_parks_when_calls_disabled(session, case, chat_log, ehr_log):
+    ref = make_referral(session, case, status="screened")
+    result = run_task(session, make_task(session, case, "submit_referral", {"referral_id": ref.id}))
+    assert result["parked"] is True
+    assert ehr_log["comms"] == []              # no "packet submitted" + confirmation
+    session.refresh(ref)
+    assert ref.status == "screened"            # not advanced to pending

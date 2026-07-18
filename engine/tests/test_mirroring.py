@@ -200,3 +200,30 @@ def test_executor_mirrors_completion(session, recorder, monkeypatch):
     assert fields["status"] == "completed"
     assert "team answered" in fields["result_summary"]
     assert len(fields["result_summary"]) <= 500
+
+
+def test_executor_parks_and_mirrors_pending(session, recorder, monkeypatch):
+    """A worker that returns {'parked': True} (calls disabled) leaves the engine
+    task in 'waiting' — NOT 'done' — and the mirrored EHR care task 'pending',
+    never 'completed'."""
+    case = _case(session)
+    task = DispoTask(
+        case_id=case.id, task_type="book_transport", mode="auto", status="approved",
+        title="Book transport", detail=json.dumps({"ehr_care_task_id": "ct-77"}),
+    )
+    session.add(task)
+    session.commit()
+
+    fake_workers = types.ModuleType("placer.workers")
+    fake_workers.run_task = lambda session, task: {"parked": True, "reason": "calls_disabled"}
+    monkeypatch.setitem(sys.modules, "placer.workers", fake_workers)
+
+    loop._execute_tasks(session, ehr=None)
+
+    session.refresh(task)
+    assert task.status == "waiting"  # not "done" -> barrier not treated as cleared
+    updates = [c for c in recorder if c[0] == "update_care_task"]
+    assert len(updates) == 1
+    _, ehr_id, fields = updates[0]
+    assert ehr_id == "ct-77"
+    assert fields["status"] == "pending"  # attempted, not completed

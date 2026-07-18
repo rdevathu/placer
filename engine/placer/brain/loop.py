@@ -253,7 +253,12 @@ def _execute_tasks(session: Session, ehr: EHRClient) -> None:
         object.__setattr__(task, "payload", router_logic.decode_payload(task))
         try:
             result = run_task(session, task)
-            task.status = "done"
+            # A worker returns {"parked": True} when it could not finish without
+            # placing a (disabled) real call. Parking leaves the task in
+            # 'waiting' — NOT 'done' — so no barrier is treated as cleared and
+            # the mirrored EHR care task stays pending, not completed.
+            parked = isinstance(result, dict) and result.get("parked")
+            task.status = "waiting" if parked else "done"
             task.result = result if isinstance(result, dict) else {"result": result}
         except Exception as exc:
             logger.exception("brain: task %s (%s) failed", task.id, task.task_type)
@@ -288,7 +293,14 @@ def _mirror_task_outcome(task: DispoTask) -> None:
 
         result = task.result
         summary = (json.dumps(result) if isinstance(result, dict) else str(result or ""))[:500]
-        status = "completed" if task.status == "done" else "blocked"
+        # done -> completed; parked/waiting -> pending (attempted, not done);
+        # anything else (failed) -> blocked.
+        if task.status == "done":
+            status = "completed"
+        elif task.status == "waiting":
+            status = "pending"
+        else:
+            status = "blocked"
         client = EHRClient(actor=f"{config.ACTOR_PREFIX}:placer")
         try:
             client.update_care_task(ehr_id, status=status, result_summary=summary)

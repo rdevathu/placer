@@ -26,6 +26,18 @@ CLEARABLE_DIMENSIONS = {"destination", "payer", "transport"}
 _OPEN_STATUSES = ("open", "in_progress", "blocked")
 
 
+def parked(reason: str, **extra) -> dict:
+    """Sentinel result for a task that could not complete without fabricating.
+
+    A worker returns this (instead of writing a communication / clearing a
+    barrier / inventing a result) when the work needs a real outbound call but
+    calls are disabled. The brain executor maps a ``{"parked": True}`` result
+    to a non-``done`` task status, so the mirrored EHR care task stays
+    pending/attempted rather than completed and the barrier stays open.
+    """
+    return {"parked": True, "reason": reason, **extra}
+
+
 def notify(session: Session, case_id: Optional[str], text: str) -> None:
     """One-line chat notification. Lazy import: placer.api.chat is owned by a
     parallel wave and may not exist while workers are developed; tests stub it."""

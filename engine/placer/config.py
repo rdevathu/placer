@@ -25,6 +25,13 @@ MODEL = os.environ.get("PLACER_MODEL", "claude-opus-4-8")
 # How outbound calls are made: 'simulated' (scripted, offline) or 'twilio'.
 CALL_MODE = os.environ.get("CALL_MODE", "simulated")
 
+# Master switch for placing outbound calls. OFF by default: Placer must NOT
+# simulate or fabricate phone calls (no invented transcripts, outcomes, bed
+# counts, confirmation numbers) — work that needs a real call is surfaced as a
+# PENDING/ATTEMPTED item and left for a real telephony integration (Bland.ai).
+# Flip to True (and set CALL_MODE) to re-enable the simulated / twilio path.
+PLACE_CALLS = os.environ.get("PLACER_PLACE_CALLS", "false").lower() in {"1", "true", "yes"}
+
 # Cadence / thresholds for the engine loop.
 HEARTBEAT_HOURS = int(os.environ.get("HEARTBEAT_HOURS", "24"))
 DEBOUNCE_SECONDS = int(os.environ.get("DEBOUNCE_SECONDS", "10"))

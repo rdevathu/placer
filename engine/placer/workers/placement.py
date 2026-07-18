@@ -14,7 +14,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from .. import calls
+from .. import calls, config
 from ..models import Referral, utcnow
 from ..registry import load_pathways
 from .common import (
@@ -28,6 +28,7 @@ from .common import (
     get_referral,
     guard_referral,
     notify,
+    parked,
     record_decline,
     short_ref,
 )
@@ -109,6 +110,13 @@ def _is_declined(call) -> bool:
     return any(w in text for w in _DECLINE_MARKERS)
 
 
+def _parked_referral(referral: Referral) -> dict:
+    """Park a referral step that needs a (disabled) real call: no fabricated
+    call, no communication row, no status advance, no bed count — the referral
+    stays exactly where it is, pending real facility outreach."""
+    return parked("calls_disabled", referral_id=referral.id, status=referral.status)
+
+
 # -- handlers ----------------------------------------------------------------
 
 
@@ -182,6 +190,8 @@ def facility_intake_call(session: Session, task, ehr, worker: str) -> dict:
     referral = get_referral(session, task)
     guard_referral(referral, {"shortlisted", "intake_verified"}, "facility_intake_call")
     case = get_case(session, referral.case_id)
+    if not config.PLACE_CALLS:
+        return _parked_referral(referral)
 
     call = calls.place_call(
         objective=f"Verify intake route and current bed capacity at {referral.facility_name}",
@@ -228,6 +238,8 @@ def facility_screen_call(session: Session, task, ehr, worker: str) -> dict:
     referral = get_referral(session, task)
     guard_referral(referral, {"intake_verified", "shortlisted"}, "facility_screen_call")
     case = get_case(session, referral.case_id)
+    if not config.PLACE_CALLS:
+        return _parked_referral(referral)
     pathway = _pathway(referral.pathway_id)
     questions = pathway.get("requirements") or [
         "Can you meet this patient's clinical needs as described?",
@@ -285,6 +297,11 @@ def submit_referral(session: Session, task, ehr, worker: str) -> dict:
     if referral.status in ("submitted", "pending"):
         return {"referral_id": referral.id, "status": referral.status, "note": "already submitted"}
     guard_referral(referral, {"screened", "conditional"}, "submit_referral")
+    # Submitting a referral packet is an outbound action to the facility (portal
+    # + confirmation). With calls/outreach disabled we must not fabricate a
+    # confirmation number or a "packet submitted" communication — park pending.
+    if not config.PLACE_CALLS:
+        return _parked_referral(referral)
     case = get_case(session, referral.case_id)
 
     confirmation = short_ref("REF")
@@ -316,6 +333,10 @@ def finalize_acceptance(session: Session, task, ehr, worker: str) -> dict:
     referral = get_referral(session, task)
     guard_referral(referral, {"pending", "conditional", "submitted"}, "finalize_acceptance")
     case = get_case(session, referral.case_id)
+    if not config.PLACE_CALLS:
+        # No fabricated acceptance: no bed hold, no bed-count mutation, no
+        # destination-barrier clear. Referral stays pending real confirmation.
+        return _parked_referral(referral)
 
     call = calls.place_call(
         objective=f"Confirm the final acceptance decision for the referral to {referral.facility_name}",

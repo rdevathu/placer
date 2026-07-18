@@ -15,7 +15,6 @@ from sqlmodel import Session
 
 from ...models import (
     CareTask,
-    Communication,
     DispoAssessment,
     Observation,
     Order,
@@ -130,7 +129,7 @@ PROG_D3 = """# Neurology Progress Note — Hospital Day 3
 - Continue aspirin/statin/lisinopril; discontinue telemetry today, 30-day monitor ordered at discharge.
 - PT/OT/SLP daily; therapy tolerance improving but still well under 3 h/day.
 - Swallow: SLP will re-titrate diet before discharge; likely discharges on nectar-thick liquids.
-- Dispo: SNF placement is the working plan — Sunny Acres (Chelsea) has beds and takes her plan but requires a negative COVID PCR within 48h; result pending. Social work spoke with daughter yesterday (see separate note) — family favors Sunny Acres. Anticipate discharge early next week if PCR results and the plan authorizes.
+- Dispo: SNF placement is the working plan — Sunny Acres (Chelsea) is the preferred in-network option, with bed availability still to be confirmed; target SNFs require a negative COVID PCR within 48h, result pending. Social work spoke with daughter yesterday (see separate note) — family favors Sunny Acres. Anticipate discharge early next week if PCR results and the plan authorizes.
 
 — Dr. Priya Nadkarni, Neurology
 """
@@ -273,26 +272,31 @@ CHAT = [
      "verifying her Tufts Medicare Preferred SNF authorization and starting outreach to in-network "
      "facilities near Chelsea."),
     ("placer", "Placer", -19.0,
-     "Called Sunny Acres Skilled Nursing (Chelsea): 3 beds available, they accept Tufts Medicare "
-     "Preferred, and they can take her early next week. One condition — they require a negative COVID "
-     "PCR within 48h of admission. Her PCR was collected but is still pending; I'll flag the moment "
-     "it results."),
+     "Sunny Acres Skilled Nursing (Chelsea) looks like the strongest in-network lead for her — close "
+     "to her neighbor and church community, and it contracts with Tufts Medicare Preferred. I've "
+     "queued outreach to verify current bed availability and confirm their COVID-test requirement; I "
+     "haven't reached them yet. Separately, target SNFs generally require a negative COVID PCR within "
+     "48h of admission — hers was collected but is still pending, so I'll flag it the moment it "
+     "results."),
     ("placer", "Placer", -8.0,
      "Two questions for the team: (1) Should I draft a PM&R consult to keep the acute-rehab (IRF) "
-     "option open at Bayview in case her therapy tolerance improves past 3h/day? (2) What discharge "
-     "date should I give Sunny Acres for the bed hold?"),
+     "option open at Bayview in case her therapy tolerance improves past 3h/day? (2) What target "
+     "discharge date should I plan around, so I can frame the SNF outreach and transport once "
+     "placement and the PCR clear?"),
     ("provider", "Dr. Priya Nadkarni", -5.0,
      "Yes — please pend the PM&R consult and I'll sign on rounds. Realistically she stays SNF-level, "
      "but keep IRF open. Target discharge Monday 7/20 if swallow keeps improving. SW note says the "
      "daughter prefers Sunny Acres."),
     ("placer", "Placer", -4.0,
-     "Got it. I'll pend the PM&R consult for your signature shortly and tell Sunny Acres to plan for "
-     "Monday 7/20. I'll also confirm the plan with her daughter Marisol this afternoon and keep the "
+     "Got it. I'll pend the PM&R consult for your signature shortly and target Monday 7/20 as the "
+     "working discharge date. I'll reach out to Sunny Acres to verify a bed and their COVID "
+     "requirement, confirm the plan with her daughter Marisol this afternoon, and keep the "
      "authorization moving with Tufts."),
     ("placer", "Placer", -2.0,
-     "Update: Sunny Acres will hold a bed through Monday, contingent on the negative PCR. Transport "
-     "can be booked same-day once the result is back. Remaining barriers: pending COVID PCR, plan "
-     "authorization, PM&R consult signature."),
+     "Update: outreach to Sunny Acres is still pending — no bed confirmed yet. Once the PCR results "
+     "and the plan authorizes, I can move quickly on placement and same-day transport. Remaining "
+     "barriers: SNF outreach to confirm a bed, pending COVID PCR, plan authorization, and the PM&R "
+     "consult signature."),
 ]
 
 
@@ -508,27 +512,13 @@ def build(session: Session) -> None:
             task_type="call_snf",
             title="Call Sunny Acres re: bed availability",
             description="Verify bed availability and COVID test requirement.",
-            status="in_progress",
+            status="pending",
             priority="high",
             assigned_to="Placer",
             related_facility_id="fac-sunny-acres",
             due_at=NOW + timedelta(hours=4),
         ),
     ])
-    session.add(
-        Communication(
-            patient_id=PID,
-            care_task_id="task-hero-a-snf",
-            facility_id="fac-sunny-acres",
-            direction="outbound",
-            modality="phone",
-            party_type="snf",
-            party_name="Sunny Acres admissions",
-            summary="Confirmed 3 beds open. They require a negative COVID PCR within 48h before accepting.",
-            outcome="bed_available",
-            occurred_at=NOW - timedelta(hours=20),
-        )
-    )
 
     # --- Placer chat ------------------------------------------------------
     for i, (sender, sender_name, hours, text) in enumerate(CHAT, start=1):

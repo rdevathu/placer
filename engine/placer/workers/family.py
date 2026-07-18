@@ -13,7 +13,7 @@ from sqlmodel import Session
 
 from .. import calls
 from ..models import utcnow
-from .common import get_case, notify
+from .common import get_case, notify, parked
 
 PREFERENCE_QUESTIONS = [
     "What discharge destination does the family prefer (home, a family member's home, assisted living, skilled nursing, rehab, hospice)?",
@@ -43,12 +43,17 @@ def preference_call(session: Session, task, ehr, worker: str) -> dict:
         f"Inpatient {patient.get('name', case.patient_id)}; active problems: "
         f"{json.dumps(chart.get('active_problems', []), default=str)[:1500]}"
     )
-    call = calls.place_call(
-        objective="Learn the family's discharge preferences, constraints, and caregiver availability",
-        questions=PREFERENCE_QUESTIONS,
-        callee=callee,
-        context=context,
-    )
+    try:
+        call = calls.place_call(
+            objective="Learn the family's discharge preferences, constraints, and caregiver availability",
+            questions=PREFERENCE_QUESTIONS,
+            callee=callee,
+            context=context,
+        )
+    except calls.CallsDisabled:
+        # No real call, no fabricated preference profile: park pending real
+        # family outreach (the decision barrier stays open regardless).
+        return parked("calls_disabled")
 
     profile = {
         "answers": call.answers,
