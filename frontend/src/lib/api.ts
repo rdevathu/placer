@@ -2,6 +2,7 @@
 // One function per backend endpoint — see backend/ehr/routers/*.py.
 
 import type {
+  ActivityEvent,
   AdminStats,
   CareTask,
   Communication,
@@ -17,6 +18,7 @@ import type {
   Patient,
   PatientChart,
   PlacerMessage,
+  PlacerOverview,
 } from "./types";
 
 export const API_BASE_URL: string =
@@ -233,6 +235,16 @@ export const placerApi = {
     patientId: string,
     body: { sender?: "provider" | "placer"; sender_name?: string; text: string },
   ) => post<PlacerMessage>(`/patients/${patientId}/placer/messages`, body),
+};
+
+// ---------------------------------------------------------------------------
+// Placer Ops (cross-patient monitoring dashboard)
+// ---------------------------------------------------------------------------
+
+export const placerOpsApi = {
+  overview: () => get<PlacerOverview>("/placer/overview"),
+  activity: (params?: { patient_id?: string; event_type?: string; limit?: number; offset?: number }) =>
+    get<ActivityEvent[]>("/placer/activity", params),
 };
 
 // ---------------------------------------------------------------------------

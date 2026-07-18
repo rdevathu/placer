@@ -44,6 +44,30 @@ def current_dispo(patient_id: str, session: Session = Depends(get_session)) -> O
     return serialize(row) if row else None
 
 
+@router.get(
+    "/dispo-assessments",
+    summary="List disposition predictions across all patients",
+    description="Cross-patient view of predictions, e.g. for a Placer monitoring dashboard. Filter by patient_id and/or is_current.",
+)
+def list_all_dispo(
+    session: Session = Depends(get_session),
+    patient_id: Optional[str] = None,
+    is_current: Optional[bool] = None,
+    predicted_disposition: Optional[str] = Query(None, description="home | home_with_services | snf | assisted_living | inpatient_rehab | ltac | hospice_home | hospice_facility | undetermined"),
+    limit: int = Query(100, le=500),
+    offset: int = 0,
+) -> list[dict]:
+    stmt = select(DispoAssessment)
+    if patient_id:
+        stmt = stmt.where(DispoAssessment.patient_id == patient_id)
+    if is_current is not None:
+        stmt = stmt.where(DispoAssessment.is_current == is_current)
+    if predicted_disposition:
+        stmt = stmt.where(DispoAssessment.predicted_disposition == predicted_disposition)
+    rows = session.exec(stmt.order_by(DispoAssessment.created_at.desc()).offset(offset).limit(limit)).all()
+    return serialize_many(rows)
+
+
 @router.post(
     "/dispo-assessments",
     status_code=201,

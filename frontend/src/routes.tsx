@@ -11,6 +11,7 @@ import NotesTab from "./pages/patient/NotesTab";
 import LabsTab from "./pages/patient/LabsTab";
 import PlacerTab from "./pages/patient/placer/PlacerTab";
 import FacilitiesPage from "./pages/FacilitiesPage";
+import PlacerOpsPage from "./pages/PlacerOpsPage";
 import AdminPage from "./pages/AdminPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
@@ -35,6 +36,7 @@ export function AppRoutes() {
           <Route path="communications" element={<Navigate to="../placer" replace />} />
         </Route>
         <Route path="facilities" element={<FacilitiesPage />} />
+        <Route path="placer-ops" element={<PlacerOpsPage />} />
         {/* Legacy global care-tasks worklist — removed with the Placer tab refactor. */}
         <Route path="tasks" element={<Navigate to="/patients" replace />} />
         <Route path="admin" element={<AdminPage />} />

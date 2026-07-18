@@ -1,10 +1,11 @@
 import { NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
-import { Building2, Moon, Sun, Users, Wrench } from "lucide-react";
+import { Activity, Building2, Moon, Sun, Users, Wrench } from "lucide-react";
 import { useTheme } from "./lib/theme";
 
 const NAV = [
   { to: "/patients", label: "Patients", icon: Users },
+  { to: "/placer-ops", label: "Placer Ops", icon: Activity },
   { to: "/facilities", label: "Facilities", icon: Building2 },
   { to: "/admin", label: "Admin", icon: Wrench },
 ];

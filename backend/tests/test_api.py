@@ -237,6 +237,50 @@ def test_communication_logging(client, fresh_db):
     assert any(c["outcome"] == "bed_available" for c in comms)
 
 
+def test_dispo_assessments_global_list(client):
+    rows = client.get("/dispo-assessments").json()
+    # One current assessment per hero, at minimum.
+    assert len(rows) >= 4
+    assert any(r["patient_id"] == "hero-a-stroke" for r in rows)
+
+    current_only = client.get("/dispo-assessments", params={"is_current": True}).json()
+    assert all(r["is_current"] for r in current_only)
+
+    scoped = client.get("/dispo-assessments", params={"patient_id": "hero-a-stroke"}).json()
+    assert all(r["patient_id"] == "hero-a-stroke" for r in scoped)
+
+
+def test_placer_overview(client):
+    r = client.get("/placer/overview")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["counts"]["monitored_patients"] >= 4
+    assert body["counts"]["open_tasks"] >= 1
+    ids = {p["patient_id"] for p in body["patients"]}
+    assert "hero-a-stroke" in ids
+    hero_a = next(p for p in body["patients"] if p["patient_id"] == "hero-a-stroke")
+    assert hero_a["current_disposition"]["predicted_disposition"] == "snf"
+    assert hero_a["open_tasks"] >= 1
+
+
+def test_placer_activity_feed(client):
+    r = client.get("/placer/activity", params={"limit": 500})
+    assert r.status_code == 200
+    events = r.json()
+    event_types = {e["event_type"] for e in events}
+    assert {"dispo_assessment", "care_task", "communication", "chat_message"} <= event_types
+    # Sorted newest-first.
+    timestamps = [e["occurred_at"] for e in events]
+    assert timestamps == sorted(timestamps, reverse=True)
+
+    scoped = client.get("/placer/activity", params={"patient_id": "hero-a-stroke", "limit": 500}).json()
+    assert all(e["patient_id"] == "hero-a-stroke" for e in scoped)
+
+    tasks_only = client.get("/placer/activity", params={"event_type": "care_task", "limit": 500}).json()
+    assert all(e["event_type"] == "care_task" for e in tasks_only)
+    assert len(tasks_only) >= 1
+
+
 def test_404_shape(client):
     r = client.get("/patients/does-not-exist")
     assert r.status_code == 404

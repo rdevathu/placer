@@ -264,3 +264,47 @@ export interface PlacerMessage {
 export interface AdminStats {
   [table: string]: number;
 }
+
+// ---------------------------------------------------------------------------
+// Placer Ops (cross-patient monitoring dashboard)
+// ---------------------------------------------------------------------------
+
+export interface ActivityEvent {
+  id: string;
+  event_type: "dispo_assessment" | "care_task" | "communication" | "chat_message";
+  occurred_at: string;
+  patient_id: string;
+  patient_name: string | null;
+  patient_mrn: string | null;
+  title: string;
+  detail: string | null;
+  status: string | null;
+  meta: Record<string, unknown>;
+}
+
+export interface PlacerOverviewPatient {
+  patient_id: string;
+  patient_name: string | null;
+  mrn: string;
+  encounter_active: boolean;
+  current_disposition: DispoAssessment | null;
+  open_tasks: number;
+  blocked_tasks: number;
+  high_priority_open_tasks: number;
+  communications_count: number;
+  last_activity_at: string | null;
+}
+
+export interface PlacerOverview {
+  counts: {
+    monitored_patients: number;
+    active_inpatients: number;
+    open_tasks: number;
+    blocked_tasks: number;
+    completed_tasks: number;
+    communications_logged: number;
+  };
+  tasks_by_status: Record<string, number>;
+  dispositions_current: Record<string, number>;
+  patients: PlacerOverviewPatient[];
+}
