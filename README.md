@@ -14,13 +14,20 @@ paperwork and coordination are already moving by the time the team commits.
 
 ## This repo
 
-Right now this repo is the **dummy EHR** the agents build against: a lightweight,
-Epic-like EHR with a clean REST API over a single SQLite database. It mimics the
-core EHR functions (patients, encounters, notes, labs, meds, orders, problems)
-and adds the disposition-planning constructs (predictions, care-task worklist,
-facilities, call logs). Everything is synthetic.
+This repo has two pieces so far:
 
-See **[`backend/README.md`](backend/README.md)** for the full API reference and
+- **`backend/`** — the **dummy EHR** the agents build against: a lightweight,
+  Epic-like EHR with a clean REST API over a single SQLite database. It mimics
+  the core EHR functions (patients, encounters, notes, labs, meds, orders,
+  problems) and adds the disposition-planning constructs (predictions,
+  care-task worklist, facilities, call logs). Everything is synthetic.
+- **`frontend/`** — a lightweight, Linear-styled demo UI over that API:
+  patient worklist + chart, orders/notes/labs with their write actions,
+  disposition predictions, facility search, and the cross-patient care-task
+  worklist.
+
+See **[`backend/README.md`](backend/README.md)** for the full API reference,
+**[`frontend/README.md`](frontend/README.md)** for the UI, and
 **[`CLAUDE.md`](CLAUDE.md)** for architecture and conventions.
 
 ## Quickstart
@@ -34,7 +41,15 @@ python -m ehr.cli reset          # build + seed the SQLite database
 python -m ehr.cli serve --reload # API at http://localhost:8000  (docs at /docs)
 ```
 
-Then explore:
+In a second terminal, start the UI:
+
+```bash
+cd frontend
+npm install
+npm run dev                      # UI at http://localhost:5173
+```
+
+Then explore the API directly if you like:
 
 ```bash
 curl 'http://localhost:8000/patients?admitted=true'        # the inpatient worklist
@@ -65,7 +80,7 @@ Plus 25 historical Synthea patients imported from `synthetic-examples/`.
 
 - [x] Backend: dummy EHR API + seed/reset
 - [ ] Agents: disposition prediction + background task execution
-- [ ] Frontend: rudimentary demo UI
+- [x] Frontend: lightweight demo UI (see [`frontend/README.md`](frontend/README.md))
 
 ## Data & safety
 
