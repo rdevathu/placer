@@ -9,11 +9,8 @@ import MedicationsTab from "./pages/patient/MedicationsTab";
 import OrdersTab from "./pages/patient/OrdersTab";
 import NotesTab from "./pages/patient/NotesTab";
 import LabsTab from "./pages/patient/LabsTab";
-import DispositionTab from "./pages/patient/DispositionTab";
-import TasksTab from "./pages/patient/TasksTab";
-import CommunicationsTab from "./pages/patient/CommunicationsTab";
+import PlacerTab from "./pages/patient/placer/PlacerTab";
 import FacilitiesPage from "./pages/FacilitiesPage";
-import TasksPage from "./pages/TasksPage";
 import AdminPage from "./pages/AdminPage";
 import NotFoundPage from "./pages/NotFoundPage";
 
@@ -31,12 +28,15 @@ export function AppRoutes() {
           <Route path="orders" element={<OrdersTab />} />
           <Route path="notes" element={<NotesTab />} />
           <Route path="labs" element={<LabsTab />} />
-          <Route path="disposition" element={<DispositionTab />} />
-          <Route path="tasks" element={<TasksTab />} />
-          <Route path="communications" element={<CommunicationsTab />} />
+          <Route path="placer" element={<PlacerTab />} />
+          {/* Legacy per-patient tabs — everything moved into the Placer tab. */}
+          <Route path="disposition" element={<Navigate to="../placer" replace />} />
+          <Route path="tasks" element={<Navigate to="../placer" replace />} />
+          <Route path="communications" element={<Navigate to="../placer" replace />} />
         </Route>
         <Route path="facilities" element={<FacilitiesPage />} />
-        <Route path="tasks" element={<TasksPage />} />
+        {/* Legacy global care-tasks worklist — removed with the Placer tab refactor. */}
+        <Route path="tasks" element={<Navigate to="/patients" replace />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

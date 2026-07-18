@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { usePatientChart } from "../PatientDetailPage";
-import { communicationsApi } from "../../lib/api";
-import { Badge, Button, CenteredSpinner, EmptyState, ErrorState, Table, Td, Th, Tr } from "../../components/ui";
-import { Field, FormGrid, Select, TextArea, TextInput } from "../../components/form";
-import { Modal } from "../../components/Modal";
-import { formatDateTime } from "../../lib/format";
-import { COMM_DIRECTION, COMM_MODALITY, LABELS, PARTY_TYPE } from "../../lib/enums";
-import { errorMessage, useToast } from "../../lib/toast";
+import { usePatientChart } from "../../PatientDetailPage";
+import { communicationsApi } from "../../../lib/api";
+import { Badge, Button, CenteredSpinner, EmptyState, ErrorState, SectionLabel, Table, Td, Th, Tr } from "../../../components/ui";
+import { Field, FormGrid, Select, TextArea, TextInput } from "../../../components/form";
+import { Modal } from "../../../components/Modal";
+import { formatDateTime } from "../../../lib/format";
+import { COMM_DIRECTION, COMM_MODALITY, LABELS, PARTY_TYPE } from "../../../lib/enums";
+import { errorMessage, useToast } from "../../../lib/toast";
 
-export default function CommunicationsTab() {
+export function CommunicationsSection() {
   const { patientId } = usePatientChart();
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -20,8 +20,9 @@ export default function CommunicationsTab() {
   });
 
   return (
-    <div>
-      <div className="mb-3 flex justify-end">
+    <section>
+      <div className="mb-1.5 flex items-center justify-between">
+        <SectionLabel>Communications</SectionLabel>
         <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
           <Plus size={13} /> Log communication
         </Button>
@@ -58,7 +59,7 @@ export default function CommunicationsTab() {
       )}
 
       <CreateCommModal patientId={patientId} open={createOpen} onClose={() => setCreateOpen(false)} />
-    </div>
+    </section>
   );
 }
 

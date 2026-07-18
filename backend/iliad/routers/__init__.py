@@ -12,6 +12,7 @@ from . import (
     observations,
     orders,
     patients,
+    placer,
 )
 
 # Order here controls tag order in the OpenAPI docs.
@@ -26,5 +27,6 @@ all_routers = [
     dispo.router,
     care_tasks.router,
     communications.router,
+    placer.router,
     admin.router,
 ]

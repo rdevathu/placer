@@ -1,4 +1,4 @@
-// Thin typed fetch client over the Placer EHR REST API.
+// Thin typed fetch client over the Iliad REST API.
 // One function per backend endpoint — see backend/ehr/routers/*.py.
 
 import type {
@@ -16,6 +16,7 @@ import type {
   Order,
   Patient,
   PatientChart,
+  PlacerMessage,
 } from "./types";
 
 export const API_BASE_URL: string =
@@ -222,11 +223,24 @@ export const communicationsApi = {
 };
 
 // ---------------------------------------------------------------------------
+// Placer chat (provider <-> Placer messages, per patient)
+// ---------------------------------------------------------------------------
+
+export const placerApi = {
+  listMessages: (patientId: string, params?: { limit?: number; offset?: number }) =>
+    get<PlacerMessage[]>(`/patients/${patientId}/placer/messages`, params),
+  sendMessage: (
+    patientId: string,
+    body: { sender?: "provider" | "placer"; sender_name?: string; text: string },
+  ) => post<PlacerMessage>(`/patients/${patientId}/placer/messages`, body),
+};
+
+// ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------
 
 export const adminApi = {
   health: () => get<{ status: string; service: string; version: string }>("/admin/health"),
   stats: () => get<AdminStats>("/admin/stats"),
-  reset: (heroesOnly = false) => post<{ status: string; row_counts: AdminStats }>("/admin/reset", undefined, { heroes_only: heroesOnly }),
+  reset: () => post<{ status: string; row_counts: AdminStats }>("/admin/reset"),
 };

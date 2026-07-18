@@ -12,14 +12,14 @@ import tempfile
 import pytest
 
 # Point the app at a temp DB and disable auto-seed (we seed explicitly).
-_TMP_DB = os.path.join(tempfile.mkdtemp(prefix="ehr-test-"), "test.db")
-os.environ["EHR_DATABASE_PATH"] = _TMP_DB
-os.environ["EHR_AUTO_SEED"] = "false"
+_TMP_DB = os.path.join(tempfile.mkdtemp(prefix="iliad-test-"), "test.db")
+os.environ["ILIAD_DATABASE_PATH"] = _TMP_DB
+os.environ["ILIAD_AUTO_SEED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from ehr.main import app  # noqa: E402
-from ehr.seed import reset_and_seed  # noqa: E402
+from iliad.main import app  # noqa: E402
+from iliad.seed import reset_and_seed  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
