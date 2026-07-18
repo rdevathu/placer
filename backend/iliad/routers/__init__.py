@@ -2,6 +2,7 @@
 
 from . import (
     admin,
+    calls,
     care_tasks,
     communications,
     conditions,
@@ -28,6 +29,7 @@ all_routers = [
     dispo.router,
     care_tasks.router,
     communications.router,
+    calls.router,
     events.router,
     placer.router,
     admin.router,

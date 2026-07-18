@@ -109,6 +109,10 @@ class Communication(TimestampMixin, table=True):
     transcript: Optional[str] = Field(default=None, sa_column=Column(Text))
     outcome: Optional[str] = Field(default=None, description="e.g. bed_available | declined | callback | preference_captured")
 
+    # Provider-side handle for a live call — e.g. the Bland call_id — so an
+    # agent can poll status/transcript after the call is placed.
+    external_id: Optional[str] = Field(default=None, index=True, description="External provider call id (e.g. Bland call_id)")
+
     occurred_at: Optional[datetime] = None
 
 
