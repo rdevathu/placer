@@ -28,7 +28,7 @@ from ..models import (
     Procedure,
 )
 from .facilities import seed_facilities
-from .hero_patients import seed_hero_patients
+from .heroes import seed_hero_patients
 
 _COUNT_MODELS = {
     "patients": Patient,

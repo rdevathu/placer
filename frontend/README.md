@@ -25,7 +25,7 @@ The backend must be running separately (see `../backend`):
 
 ```bash
 cd backend
-python -m ehr.cli serve --reload   # http://localhost:8000
+python -m iliad.cli serve --reload   # http://localhost:8000
 ```
 
 By default the frontend talks to `http://localhost:8000`. Override with a

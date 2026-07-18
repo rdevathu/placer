@@ -11,9 +11,83 @@ def test_health(client):
 
 def test_seed_populated(client):
     counts = client.get("/admin/stats").json()
-    assert counts["patients"] >= 4  # the hero cohort
+    assert counts["patients"] == 4  # the hero cohort is the whole demo
     assert counts["facilities"] >= 6
     assert counts["observations"] >= 12
+    assert counts["encounters"] >= 12  # each hero has priors + the current admission
+    assert counts["notes"] >= 30
+    assert counts["placer_messages"] >= 12
+
+
+def test_patient_demographics(client):
+    p = client.get("/patients/hero-a-stroke").json()
+    assert p["phone"]
+    assert p["address_line"]
+    assert p["emergency_contact_name"]
+    assert p["emergency_contact_relationship"]
+    assert p["emergency_contact_phone"]
+
+
+def test_encounter_history(client):
+    encounters = client.get("/patients/hero-a-stroke/encounters").json()
+    assert len(encounters) >= 3
+    active = [e for e in encounters if e["status"] == "in-progress"]
+    assert len(active) == 1
+    # The current admission is the most recent encounter.
+    assert active[0]["period_start"] == max(e["period_start"] for e in encounters)
+
+    notes = client.get("/patients/hero-a-stroke/notes").json()
+    by_enc = {}
+    for n in notes:
+        by_enc.setdefault(n["encounter_id"], set()).add(n["note_type"])
+
+    # Every finished inpatient stay is fully noted; the current one has no
+    # discharge summary yet.
+    finished_imp = [e for e in encounters if e["status"] == "finished" and e["class_code"] == "IMP"]
+    assert finished_imp
+    for enc in finished_imp:
+        assert {"history_and_physical", "progress", "discharge_summary"} <= by_enc[enc["id"]]
+    current_types = by_enc[active[0]["id"]]
+    assert "history_and_physical" in current_types
+    assert "progress" in current_types
+    assert "discharge_summary" not in current_types
+    # Outpatient visits each carry a progress note.
+    for enc in (e for e in encounters if e["class_code"] == "AMB"):
+        assert "progress" in by_enc[enc["id"]]
+
+
+def test_seed_has_no_agent_authored_artifacts(client):
+    # "For now" nothing clinical in the seed is authored by Placer: no orders,
+    # no notes. Placer only owns its native rows (assessments, tasks, chat).
+    for pid in ("hero-a-stroke", "hero-b-chf", "hero-c-hospice", "hero-d-ambiguous"):
+        orders = client.get("/orders", params={"patient_id": pid}).json()
+        assert all(o["ordered_by"] not in ("Placer", "dispo-agent") for o in orders)
+        notes = client.get(f"/patients/{pid}/notes").json()
+        assert all(not n["authored_by_agent"] for n in notes)
+
+
+def test_placer_message_thread_seeded(client):
+    msgs = client.get("/patients/hero-a-stroke/placer/messages").json()
+    assert len(msgs) >= 3
+    senders = {m["sender"] for m in msgs}
+    assert senders == {"placer", "provider"}
+    stamps = [m["created_at"] for m in msgs]
+    assert stamps == sorted(stamps)  # chronological thread order
+
+
+def test_placer_message_post(client, fresh_db):
+    r = client.post(
+        "/patients/hero-b-chf/placer/messages",
+        json={"text": "Plan is IV to PO today; target discharge tomorrow."},
+    )
+    assert r.status_code == 201
+    msg = r.json()
+    assert msg["sender"] == "provider"  # default sender
+
+    msgs = client.get("/patients/hero-b-chf/placer/messages").json()
+    assert msgs[-1]["id"] == msg["id"]
+
+    assert client.get("/patients/nope/placer/messages").status_code == 404
 
 
 def test_admitted_worklist(client):
