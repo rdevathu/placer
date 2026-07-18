@@ -12,3 +12,7 @@ routers: list = []
 from .chat import router as chat_router  # noqa: E402
 
 routers.append(chat_router)
+
+from .ops import router as ops_router  # noqa: E402
+
+routers.append(ops_router)
