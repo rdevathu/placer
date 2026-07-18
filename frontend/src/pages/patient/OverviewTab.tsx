@@ -2,11 +2,20 @@ import { Link } from "react-router-dom";
 import { usePatientChart } from "../PatientDetailPage";
 import { Badge, Card, CardHeader, EmptyState, Kv } from "../../components/ui";
 import { formatDate, statusVariant, priorityVariant, abnormalVariant } from "../../lib/format";
-import { LABELS, humanize } from "../../lib/enums";
+import { humanize } from "../../lib/enums";
 
 export default function OverviewTab() {
   const { patientId, chart } = usePatientChart();
-  const { patient, active_problems, medications, latest_vitals, pending_labs, abnormal_labs, open_care_tasks, open_orders, current_disposition } = chart;
+  const { patient, active_problems, medications, latest_vitals, pending_labs, abnormal_labs, open_care_tasks, open_orders } = chart;
+
+  const cityStateZip = [[patient.city, patient.state].filter(Boolean).join(", "), patient.postal_code]
+    .filter(Boolean)
+    .join(" ");
+  const address = [patient.address_line, cityStateZip].filter(Boolean).join(", ") || null;
+  const emergencyContact =
+    [patient.emergency_contact_name, patient.emergency_contact_relationship, patient.emergency_contact_phone]
+      .filter(Boolean)
+      .join(" · ") || null;
 
   return (
     <div className="grid grid-cols-2 gap-4 pb-6">
@@ -17,37 +26,15 @@ export default function OverviewTab() {
           <Kv label="Birth date" value={formatDate(patient.birth_date)} />
           <Kv label="Marital status" value={patient.marital_status ? humanize(patient.marital_status) : null} />
           <Kv label="Language" value={patient.language} />
-          <Kv label="Location" value={[patient.city, patient.state].filter(Boolean).join(", ") || null} />
+          <Kv label="Phone" value={patient.phone} />
+          <Kv label="Address" value={address} />
+          <Kv label="Emergency contact" value={emergencyContact} />
           <Kv label="Living situation" value={patient.living_situation ? humanize(patient.living_situation) : null} />
           <Kv label="Code status" value={patient.code_status} />
         </div>
       </Card>
 
       <Card>
-        <CardHeader title="Current disposition" action={<Link to={`/patients/${patientId}/disposition`} className="text-[11.5px] text-accent hover:underline">History →</Link>} />
-        {current_disposition ? (
-          <div className="px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Badge variant="success">{LABELS.dispositionType[current_disposition.predicted_disposition] ?? current_disposition.predicted_disposition}</Badge>
-              {current_disposition.confidence != null && (
-                <span className="text-[11.5px] text-text-tertiary">{Math.round(current_disposition.confidence * 100)}% confidence</span>
-              )}
-            </div>
-            {current_disposition.rationale && <p className="mt-2 text-[12px] leading-relaxed text-text-secondary">{current_disposition.rationale}</p>}
-            {current_disposition.barriers && current_disposition.barriers.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {current_disposition.barriers.map((b, i) => (
-                  <Badge key={i} variant="warning">{b}</Badge>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <EmptyState title="No prediction yet" />
-        )}
-      </Card>
-
-      <Card className="col-span-2">
         <CardHeader title="Active problems" subtitle={`${active_problems.length} active`} />
         {active_problems.length === 0 ? (
           <EmptyState title="No active problems" />
@@ -126,7 +113,7 @@ export default function OverviewTab() {
       </Card>
 
       <Card>
-        <CardHeader title="Open care tasks" subtitle={`${open_care_tasks.length} open`} action={<Link to={`/patients/${patientId}/tasks`} className="text-[11.5px] text-accent hover:underline">View all →</Link>} />
+        <CardHeader title="Open care tasks" subtitle={`${open_care_tasks.length} open`} action={<Link to={`/patients/${patientId}/placer`} className="text-[11.5px] text-accent hover:underline">View all →</Link>} />
         {open_care_tasks.length === 0 ? (
           <EmptyState title="No open tasks" />
         ) : (

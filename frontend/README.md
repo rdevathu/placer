@@ -1,14 +1,17 @@
-# Placer EHR — frontend
+# Iliad — frontend
 
-A lightweight, Linear-styled UI over the [dummy EHR API](../backend). Built with
-Vite + React + TypeScript, TanStack Query for server state, React Router for
-navigation, and Tailwind CSS v4 for styling — no heavier framework needed.
+A lightweight, Linear-styled UI for the Iliad demo EHR, built over the
+[dummy EHR API](../backend) with Vite + React + TypeScript, TanStack Query for
+server state, React Router for navigation, and Tailwind CSS v4 for styling — no
+heavier framework needed.
 
 It surfaces every resource the backend exposes: the patient worklist and chart,
 encounters, problems, medications, orders (place/sign/complete/cancel), notes
-(draft/sign), vitals & labs (including resulting a pending lab), disposition
-predictions, facility placement search, the care-task worklist (patient-scoped
-and global), communications log, and an admin panel for stats + demo reset.
+(draft/sign), vitals & labs (including resulting a pending lab), facility
+placement search, and an admin panel for stats + demo reset. **Placer** — the
+disposition-planning product — surfaces as a per-patient tab that bundles the
+disposition predictions, care-task worklist, communications log, and a
+provider ↔ Placer chat panel.
 
 ## Development
 
@@ -55,8 +58,8 @@ src/
 │   ├── PatientsPage.tsx        # worklist (admitted / all, search, create)
 │   ├── PatientDetailPage.tsx   # chart header + tab shell
 │   ├── patient/                # one tab per chart section
+│   │   └── placer/             # the embedded Placer tab (dispo, tasks, comms, chat)
 │   ├── FacilitiesPage.tsx      # placement search
-│   ├── TasksPage.tsx           # cross-patient care-task worklist
 │   └── AdminPage.tsx           # health, row counts, reset
 └── routes.tsx
 ```

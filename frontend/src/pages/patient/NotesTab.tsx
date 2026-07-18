@@ -49,7 +49,7 @@ export default function NotesTab() {
                 <Td className="font-medium">{n.title || LABELS.noteType[n.note_type] || n.note_type}</Td>
                 <Td>{LABELS.noteType[n.note_type] ?? n.note_type}</Td>
                 <Td><Badge variant={statusVariant(n.status)}>{n.status}</Badge></Td>
-                <Td>{n.author ?? (n.authored_by_agent ? "Agent" : "—")}</Td>
+                <Td>{n.author ?? (n.authored_by_agent ? "Placer" : "—")}</Td>
                 <Td>{formatDateTime(n.created_at)}</Td>
               </Tr>
             ))}
@@ -141,7 +141,7 @@ function ViewNoteModal({ note, onClose }: { note: Note; onClose: () => void }) {
       <div className="mb-3 flex items-center gap-2">
         <Badge variant={statusVariant(note.status)}>{note.status}</Badge>
         <span className="text-[11.5px] text-text-tertiary">
-          {note.author ?? "Agent"} · {formatDateTime(note.created_at)}
+          {note.author ?? (note.authored_by_agent ? "Placer" : "—")} · {formatDateTime(note.created_at)}
         </span>
       </div>
       {editable ? (

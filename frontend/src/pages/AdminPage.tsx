@@ -1,22 +1,19 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { adminApi, API_BASE_URL } from "../lib/api";
 import { Button, Card, CardHeader, CenteredSpinner, ErrorState, Kv, PageHeader } from "../components/ui";
-import { Checkbox } from "../components/form";
 import { errorMessage, useToast } from "../lib/toast";
 import { humanize } from "../lib/enums";
 
 export default function AdminPage() {
   const toast = useToast();
   const qc = useQueryClient();
-  const [heroesOnly, setHeroesOnly] = useState(false);
 
   const healthQuery = useQuery({ queryKey: ["admin-health"], queryFn: adminApi.health });
   const statsQuery = useQuery({ queryKey: ["admin-stats"], queryFn: adminApi.stats });
 
   const resetMutation = useMutation({
-    mutationFn: () => adminApi.reset(heroesOnly),
+    mutationFn: () => adminApi.reset(),
     onSuccess: () => {
       toast.success("Database reset to seed state");
       qc.invalidateQueries();
@@ -45,9 +42,8 @@ export default function AdminPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Reset database" subtitle="Drops all data and reseeds from the fixed seed set" />
+            <CardHeader title="Reset database" subtitle="Drops all data and reseeds the fixed seed set (4 hero patients + facilities)" />
             <div className="flex flex-col gap-3 px-4 py-3">
-              <Checkbox label="Heroes only (skip the 25 imported FHIR patients — faster)" checked={heroesOnly} onChange={(e) => setHeroesOnly(e.target.checked)} />
               <Button variant="danger" size="sm" loading={resetMutation.isPending} onClick={() => resetMutation.mutate()} className="self-start">
                 <RotateCcw size={13} /> Reset to seed state
               </Button>

@@ -14,8 +14,14 @@ export interface Patient {
   deceased: boolean;
   marital_status: string | null;
   language: string | null;
+  phone: string | null;
+  address_line: string | null;
   city: string | null;
   state: string | null;
+  postal_code: string | null;
+  emergency_contact_name: string | null;
+  emergency_contact_relationship: string | null;
+  emergency_contact_phone: string | null;
   living_situation: string | null;
   code_status: string | null;
   age: number | null;
@@ -243,6 +249,16 @@ export interface PatientChart {
   current_disposition: DispoAssessment | null;
   open_care_tasks: CareTask[];
   open_orders: Order[];
+}
+
+export interface PlacerMessage {
+  id: string;
+  patient_id: string;
+  sender: "provider" | "placer";
+  sender_name: string | null;
+  text: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AdminStats {
