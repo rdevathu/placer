@@ -27,6 +27,8 @@ from sqlmodel import Session
 
 from .. import bland, config
 from ..db import get_session
+from sqlmodel import select
+
 from ..events import get_actor, record_event
 from ..models import Communication, Facility, Patient
 from ..models.base import new_id, utcnow
@@ -34,6 +36,52 @@ from ..schemas import CallRequest
 from ._common import get_or_404, serialize
 
 router = APIRouter(prefix="/calls", tags=["calls"])
+
+
+@router.post(
+    "/webhook",
+    summary="Receive a completed-call result (Bland) and surface its action items",
+    description=(
+        "Bland posts the finished call here (or POST it manually to simulate). "
+        "The transcript/summary is attached to the logged Communication and a "
+        "`call.completed` event is emitted so Placer can act on what the callee "
+        "required — e.g. draft a COVID-test order. Matches the call by "
+        "`call_id`/`metadata.call_id` against the communication's `external_id`."
+    ),
+)
+def call_webhook(payload: dict, session: Session = Depends(get_session), actor: str = Depends(get_actor)) -> dict:
+    meta = payload.get("metadata") or {}
+    call_id = payload.get("call_id") or payload.get("id") or meta.get("call_id")
+    transcript = (
+        payload.get("concatenated_transcript")
+        or payload.get("transcript")
+        or payload.get("summary")
+        or ""
+    )
+    summary = payload.get("summary") or (transcript[:500] if transcript else "Call completed.")
+
+    comm = None
+    if call_id:
+        comm = session.exec(select(Communication).where(Communication.external_id == str(call_id))).first()
+    if comm is not None:
+        comm.summary = summary
+        comm.transcript = transcript or comm.transcript
+        comm.outcome = "call_completed"
+        comm.updated_at = utcnow()
+        session.add(comm)
+
+    patient_id = (comm.patient_id if comm else None) or meta.get("patient_id") or payload.get("patient_id")
+    record_event(
+        session,
+        "call.completed",
+        patient_id=patient_id,
+        actor=actor,
+        entity_type="communication",
+        entity_id=comm.id if comm else None,
+        payload={"call_id": call_id, "summary": summary, "transcript": transcript},
+    )
+    session.commit()
+    return {"matched_communication": comm.id if comm else None, "patient_id": patient_id, "event": "call.completed"}
 
 
 def _snf_gate(body: CallRequest, session: Session) -> None:

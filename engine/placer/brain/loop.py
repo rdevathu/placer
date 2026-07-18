@@ -13,11 +13,12 @@ import asyncio
 import logging
 import threading
 from datetime import timedelta
-from typing import Optional
+from typing import List, Optional
 
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from placer import config
+from placer import config, llm
 from placer.db import engine as db_engine
 from placer.ehr_client import EHRClient
 from placer.models import Barrier, Case, DispoTask, EngineMeta, Run, utcnow
@@ -103,7 +104,7 @@ def _process_events(session: Session, ehr: EHRClient) -> None:
         return
     for ev in events:
         try:
-            _route_event(session, ev)
+            _route_event(session, ev, ehr)
         except Exception:
             logger.exception("brain: failed routing event seq=%s", ev.get("seq"))
         cursor = max(cursor, int(ev.get("seq") or cursor))
@@ -111,13 +112,78 @@ def _process_events(session: Session, ehr: EHRClient) -> None:
     session.commit()
 
 
-def _route_event(session: Session, ev: dict) -> None:
+class _CallOrder(BaseModel):
+    order_type: str = Field(description="lab | consult | imaging | medication | procedure")
+    display: str = Field(description="What to order, e.g. 'SARS-CoV-2 PCR' or 'PM&R consult'")
+    detail: Optional[str] = Field(default=None, description="Why — the requirement the call surfaced")
+
+
+class _CallOrders(BaseModel):
+    orders: List[_CallOrder] = Field(
+        description="Concrete clinical orders the team should place as a result of the call; empty if none."
+    )
+
+
+_CALL_ORDERS_SYSTEM = (
+    "You are Placer, reading the outcome of a phone call a hospital discharge "
+    "planner placed to a facility (e.g. a SNF). Extract ONLY concrete clinical "
+    "orders the patient's team must place as a direct result of what the callee "
+    "required — e.g. 'they require a negative COVID-19 PCR before admission' -> a "
+    "lab order for SARS-CoV-2 PCR. Do not invent orders that were not implied. "
+    "Return an empty list if the call surfaced no order-able requirement."
+)
+
+
+def _act_on_call_result(session: Session, ehr: EHRClient, ev: dict) -> None:
+    """A call completed: read its transcript/summary and draft (pend) any orders
+    the callee's requirements imply. Fully LLM-driven — nothing is hardcoded to a
+    specific test — and every order is a DRAFT for a clinician to sign."""
+    patient_id = ev.get("patient_id")
+    if not patient_id:
+        return
+    case = _find_case(session, patient_id)
+    payload = ev.get("payload") or {}
+    transcript = payload.get("transcript") or payload.get("summary") or payload.get("outcome") or ""
+    if not transcript:
+        return
+    try:
+        extracted = llm.structured(
+            f"Call transcript / summary:\n{transcript}\n\n"
+            "List the clinical orders the team should place as a result.",
+            _CallOrders, system=_CALL_ORDERS_SYSTEM,
+        )
+    except Exception as exc:  # never let extraction break the event loop
+        logger.warning("brain: call-result order extraction failed (%s)", exc)
+        return
+    for o in extracted.orders:
+        ehr.create_order(
+            patient_id=patient_id,
+            encounter_id=case.encounter_id if case else None,
+            order_type=o.order_type,
+            display=o.display,
+            detail=o.detail,
+            status="draft",
+        )
+        try:
+            post_chat(session, f"Call follow-up: pended a draft {o.order_type} order '{o.display}' from the facility's requirement.",
+                      case_id=case.id if case else None)
+        except Exception:
+            pass
+    if case:
+        _mark_dirty(session, case)
+
+
+def _route_event(session: Session, ev: dict, ehr: Optional[EHRClient] = None) -> None:
     patient_id = ev.get("patient_id")
     event_type = ev.get("event_type") or ""
     actor = ev.get("actor") or ""
 
     if event_type == "placer_message.created":
         _route_placer_message(session, ev)
+        return
+
+    if event_type == "call.completed":
+        _act_on_call_result(session, ehr, ev)
         return
 
     if event_type == "patient.admitted" and patient_id:

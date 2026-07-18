@@ -117,6 +117,59 @@ def _parked_referral(referral: Referral) -> dict:
     return parked("calls_disabled", referral_id=referral.id, status=referral.status)
 
 
+_BLAND_CALL_MARKER = "bland-call:"
+
+
+def _facility_is_snf(ehr, facility_id: str) -> bool:
+    return (fetch_facility(ehr, facility_id) or {}).get("facility_type") == "snf"
+
+
+def _place_snf_bland_call(session: Session, ehr, case, referral, task, worker: str) -> dict:
+    """Place ONE real bed-availability call to a SNF via the Iliad /calls
+    endpoint (Bland), then PARK awaiting the real outcome.
+
+    A real call is asynchronous — we do not get a bed count back synchronously,
+    so we fabricate nothing: no bed number, no barrier clear, no status advance.
+    Idempotent: a marker in ``referral.notes`` prevents re-dialing the same
+    facility on a later loop. The backend logs the Communication + call.placed
+    event; the engine must not also write one."""
+    if referral.notes and _BLAND_CALL_MARKER in referral.notes:
+        return parked("snf_call_already_placed", referral_id=referral.id)
+
+    bland_task = (
+        "You are Placer, an AI assistant calling on behalf of County General "
+        f"Hospital's discharge-planning team. You are calling {referral.facility_name}, "
+        "a skilled nursing facility. Politely ask the admissions desk whether they "
+        "currently have any beds available for a patient we are preparing to "
+        "discharge, and whether they require a negative COVID-19 PCR before "
+        "admission. Keep it brief and professional; thank them and end the call."
+    )
+    try:
+        resp = ehr.place_call(
+            patient_id=case.patient_id,
+            task=bland_task,
+            party_type="snf",
+            party_name=f"{referral.facility_name} admissions",
+            facility_id=referral.facility_id,
+            care_task_id=getattr(task, "ehr_care_task_id", None) or get_payload(task).get("ehr_care_task_id"),
+        )
+    except Exception as exc:  # Bland unconfigured / upstream failure: park, never crash the loop
+        notify(session, case.id, f"{worker}: could not place the SNF call to {referral.facility_name} ({exc}); left pending.")
+        return parked("snf_call_failed", referral_id=referral.id, error=str(exc))
+
+    call_id = (resp or {}).get("call_id")
+    append_note(referral, f"{_BLAND_CALL_MARKER}{call_id}")
+    session.add(referral)
+    notify(
+        session,
+        case.id,
+        f"{worker}: placed a real call to {referral.facility_name} (SNF) via Bland to check "
+        f"bed availability and COVID requirement — awaiting the outcome (call {call_id}).",
+    )
+    # Park: the call is placed, the real result is pending — nothing to fabricate.
+    return parked("snf_call_placed", referral_id=referral.id, call_id=call_id)
+
+
 # -- handlers ----------------------------------------------------------------
 
 
@@ -190,6 +243,13 @@ def facility_intake_call(session: Session, task, ehr, worker: str) -> dict:
     referral = get_referral(session, task)
     guard_referral(referral, {"shortlisted", "intake_verified"}, "facility_intake_call")
     case = get_case(session, referral.case_id)
+
+    # SNF bed-availability outreach goes through Bland as a REAL call (the only
+    # party Placer may dial autonomously). It parks awaiting the real outcome —
+    # no fabricated beds. Everything else falls through to the (disabled by
+    # default) simulated path, which parks when PLACE_CALLS is off.
+    if config.SNF_CALLS and _facility_is_snf(ehr, referral.facility_id):
+        return _place_snf_bland_call(session, ehr, case, referral, task, worker)
     if not config.PLACE_CALLS:
         return _parked_referral(referral)
 

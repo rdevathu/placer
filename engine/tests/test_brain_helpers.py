@@ -20,6 +20,7 @@ class FakeEHR:
         self.events = events or []
         self.notes = notes or []
         self.labs = labs or []
+        self.calls_placed: list = []
         self.assessments: list = []
 
     def get_chart(self, patient_id):
@@ -30,6 +31,13 @@ class FakeEHR:
 
     def list_labs(self, patient_id, status=None):
         return self.labs
+
+    def place_call(self, patient_id, task, party_type="snf", party_name=None,
+                   facility_id=None, care_task_id=None):
+        rec = {"patient_id": patient_id, "task": task, "party_type": party_type,
+               "party_name": party_name, "facility_id": facility_id, "care_task_id": care_task_id}
+        self.calls_placed.append(rec)
+        return {"call_id": f"bland-{len(self.calls_placed)}", "communication": {"id": "comm-x"}}
 
     def post_dispo_assessment(self, **kwargs):
         self.assessments.append(kwargs)

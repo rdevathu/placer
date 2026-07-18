@@ -55,7 +55,7 @@ def ehr_log(monkeypatch):
     """Record-only EHRClient: no httpx client, no network."""
     from placer.ehr_client import EHRClient
 
-    log = {"orders": [], "comms": [], "facility_updates": [], "actors": []}
+    log = {"orders": [], "comms": [], "facility_updates": [], "actors": [], "calls": []}
 
     def fake_init(self, base_url=None, actor="agent:test", timeout=10.0):
         self.actor = actor
@@ -76,12 +76,17 @@ def ehr_log(monkeypatch):
         log["facility_updates"].append((facility_id, fields))
         return {"id": facility_id, **fields}
 
+    def place_call(self, **kw):
+        log["calls"].append(kw)
+        return {"call_id": f"bland-{len(log['calls'])}", "communication": {"id": "comm-x"}}
+
     monkeypatch.setattr(EHRClient, "__init__", fake_init)
     monkeypatch.setattr(EHRClient, "close", lambda self: None)
     monkeypatch.setattr(EHRClient, "create_order", create_order)
     monkeypatch.setattr(EHRClient, "create_communication", create_communication)
     monkeypatch.setattr(EHRClient, "list_facilities", list_facilities)
     monkeypatch.setattr(EHRClient, "update_facility", update_facility)
+    monkeypatch.setattr(EHRClient, "place_call", place_call)
     monkeypatch.setattr(EHRClient, "get_chart", lambda self, patient_id: dict(CHART))
     return log
 
@@ -484,6 +489,30 @@ def test_facility_intake_parks_and_is_idempotent_when_calls_disabled(session, ca
     assert ehr_log["facility_updates"] == []   # no fabricated bed count
     assert len(session.exec(select(FacilityIntel)).all()) == 0
     assert len(session.exec(select(Referral).where(Referral.case_id == case.id)).all()) == 1
+
+
+def test_snf_intake_places_real_bland_call_and_parks(session, case, chat_log, ehr_log, monkeypatch):
+    """With PLACER_SNF_CALLS on, a SNF bed-check dials a REAL call via /calls and
+    parks awaiting the outcome — no fabricated beds, no engine-written comm, and
+    it never re-dials the same facility."""
+    monkeypatch.setattr("placer.config.SNF_CALLS", True)
+    ref = make_referral(session, case, facility_id="fac-1", name="Sunrise SNF", status="shortlisted")
+
+    result = run_task(session, make_task(session, case, "facility_intake_call", {"referral_id": ref.id}))
+    session.commit()  # the brain executor commits after each task; the idempotency marker persists
+    assert result["parked"] is True
+    assert result["reason"] == "snf_call_placed"
+    assert len(ehr_log["calls"]) == 1                      # one real Bland call
+    assert ehr_log["calls"][0]["party_type"] == "snf"
+    assert ehr_log["calls"][0]["facility_id"] == "fac-1"
+    assert ehr_log["comms"] == []                          # backend logs it, engine must not
+    assert ehr_log["facility_updates"] == []              # no fabricated bed count
+    session.refresh(ref)
+    assert ref.status == "shortlisted"                     # no fabricated advance
+
+    # Idempotent: a second invocation must NOT place another call.
+    run_task(session, make_task(session, case, "facility_intake_call", {"referral_id": ref.id}))
+    assert len(ehr_log["calls"]) == 1
 
 
 def test_finalize_acceptance_parks_when_calls_disabled(session, case, chat_log, ehr_log):
