@@ -42,9 +42,7 @@ export default function PatientDetailPage() {
     { to: `/patients/${id}/orders`, label: "Orders" },
     { to: `/patients/${id}/labs`, label: "Labs & vitals" },
     { to: `/patients/${id}/notes`, label: "Notes" },
-    { to: `/patients/${id}/disposition`, label: "Disposition" },
-    { to: `/patients/${id}/tasks`, label: "Care tasks" },
-    { to: `/patients/${id}/communications`, label: "Communications" },
+    { to: `/patients/${id}/placer`, label: "Placer" },
   ];
 
   return (

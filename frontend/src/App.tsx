@@ -1,11 +1,10 @@
 import { NavLink, Outlet } from "react-router-dom";
 import clsx from "clsx";
-import { Building2, ListChecks, Moon, Sun, Users, Wrench } from "lucide-react";
+import { Building2, Moon, Sun, Users, Wrench } from "lucide-react";
 import { useTheme } from "./lib/theme";
 
 const NAV = [
   { to: "/patients", label: "Patients", icon: Users },
-  { to: "/tasks", label: "Care tasks", icon: ListChecks },
   { to: "/facilities", label: "Facilities", icon: Building2 },
   { to: "/admin", label: "Admin", icon: Wrench },
 ];
@@ -18,9 +17,9 @@ export default function App() {
       <aside className="flex w-[212px] shrink-0 flex-col border-r border-border bg-bg">
         <div className="flex items-center gap-2 px-4 py-4">
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-[11px] font-bold text-white">
-            P
+            I
           </div>
-          <span className="text-[13px] font-semibold tracking-tight">Placer EHR</span>
+          <span className="text-[13px] font-semibold tracking-tight">Iliad</span>
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 px-2">

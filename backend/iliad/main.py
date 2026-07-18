@@ -1,6 +1,6 @@
 """FastAPI application entrypoint.
 
-Run with:  uvicorn ehr.main:app --reload
+Run with:  uvicorn iliad.main:app --reload
 Docs:      http://localhost:8000/docs   (OpenAPI at /openapi.json)
 """
 
@@ -19,13 +19,13 @@ from .routers import all_routers
 from .seed import reset_and_seed
 
 DESCRIPTION = """
-A lightweight, Epic-like **dummy EHR** for building and demoing healthcare agents.
+**Iliad** — a lightweight, Epic-like demo EHR.
 
-It exposes clean REST endpoints over a single SQLite database so agents can
-reliably traverse a patient's chart and take clinical actions. Built for a
-discharge-**disposition** planning use case: predict where a hospitalized
-patient will go after discharge and work the barriers (call facilities/family,
-pend labs, draft consults) in the background.
+Iliad exposes clean REST endpoints over a single SQLite database so agents and
+frontends can reliably traverse a patient's chart and take clinical actions.
+**Placer**, a discharge-disposition planning product built on top of Iliad,
+uses this API to read charts, track care tasks, and message the care team; in
+the Iliad UI it surfaces as a per-patient "Placer" tab.
 
 ### Where to start
 - `GET /patients?admitted=true` — the inpatient worklist (active encounters).

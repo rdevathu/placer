@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { usePatientChart } from "../PatientDetailPage";
-import { dispoApi } from "../../lib/api";
-import { Badge, Button, Card, CenteredSpinner, EmptyState, ErrorState } from "../../components/ui";
-import { Field, FormGrid, Select, TextArea, TextInput } from "../../components/form";
-import { Modal } from "../../components/Modal";
-import { formatDateTime } from "../../lib/format";
-import { DISPOSITION_TYPE, LABELS } from "../../lib/enums";
-import { errorMessage, useToast } from "../../lib/toast";
+import { usePatientChart } from "../../PatientDetailPage";
+import { dispoApi } from "../../../lib/api";
+import { Badge, Button, Card, CenteredSpinner, EmptyState, ErrorState, SectionLabel } from "../../../components/ui";
+import { Field, FormGrid, Select, TextArea, TextInput } from "../../../components/form";
+import { Modal } from "../../../components/Modal";
+import { formatDateTime } from "../../../lib/format";
+import { DISPOSITION_TYPE, LABELS } from "../../../lib/enums";
+import { errorMessage, useToast } from "../../../lib/toast";
 
-export default function DispositionTab() {
+export function DispositionSection() {
   const { patientId } = usePatientChart();
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -20,8 +20,9 @@ export default function DispositionTab() {
   });
 
   return (
-    <div>
-      <div className="mb-3 flex justify-end">
+    <section>
+      <div className="mb-1.5 flex items-center justify-between">
+        <SectionLabel>Disposition</SectionLabel>
         <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
           <Plus size={13} /> Post prediction
         </Button>
@@ -66,7 +67,7 @@ export default function DispositionTab() {
       </div>
 
       <CreateDispoModal patientId={patientId} open={createOpen} onClose={() => setCreateOpen(false)} />
-    </div>
+    </section>
   );
 }
 
@@ -119,7 +120,7 @@ function CreateDispoModal({ patientId, open, onClose }: { patientId: string; ope
           <TextInput value={form.barriers} onChange={(e) => setForm({ ...form, barriers: e.target.value })} placeholder="pending COVID test, PM&R consult" />
         </Field>
         <Field label="Assessed by">
-          <TextInput value={form.assessed_by} onChange={(e) => setForm({ ...form, assessed_by: e.target.value })} placeholder="Agent or clinician name" />
+          <TextInput value={form.assessed_by} onChange={(e) => setForm({ ...form, assessed_by: e.target.value })} placeholder="Placer or clinician name" />
         </Field>
         <div className="mt-2 flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>

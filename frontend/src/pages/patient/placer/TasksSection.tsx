@@ -1,17 +1,24 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
-import { usePatientChart } from "../PatientDetailPage";
-import { careTasksApi } from "../../lib/api";
-import { Badge, Button, CenteredSpinner, EmptyState, ErrorState, Table, Td, Th, Tr } from "../../components/ui";
-import { Field, FormGrid, Select, TextArea, TextInput } from "../../components/form";
-import { Modal } from "../../components/Modal";
-import { formatDateTime, priorityVariant, statusVariant } from "../../lib/format";
-import { LABELS, TASK_PRIORITY, TASK_STATUS, TASK_TYPE, humanize } from "../../lib/enums";
-import { errorMessage, useToast } from "../../lib/toast";
-import type { CareTask } from "../../lib/types";
+import { usePatientChart } from "../../PatientDetailPage";
+import { careTasksApi } from "../../../lib/api";
+import { Badge, Button, CenteredSpinner, EmptyState, ErrorState, SectionLabel, Table, Td, Th, Tr } from "../../../components/ui";
+import { Field, FormGrid, Select, TextArea, TextInput } from "../../../components/form";
+import { Modal } from "../../../components/Modal";
+import { formatDateTime, priorityVariant, statusVariant } from "../../../lib/format";
+import { LABELS, TASK_PRIORITY, TASK_STATUS, TASK_TYPE, humanize } from "../../../lib/enums";
+import { errorMessage, useToast } from "../../../lib/toast";
+import type { CareTask } from "../../../lib/types";
 
-export default function TasksTab() {
+// Display groups, in worklist order. Blocked/cancelled land in a minor "Other" group.
+const TASK_GROUPS: { label: string; statuses: string[] }[] = [
+  { label: "Pending", statuses: ["pending"] },
+  { label: "In progress", statuses: ["in_progress"] },
+  { label: "Completed", statuses: ["completed"] },
+];
+
+export function TasksSection() {
   const { patientId } = usePatientChart();
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<CareTask | null>(null);
@@ -21,9 +28,18 @@ export default function TasksTab() {
     queryFn: () => careTasksApi.list({ patient_id: patientId }),
   });
 
+  const grouped = TASK_GROUPS.map((g) => ({
+    label: g.label,
+    tasks: (data ?? []).filter((t) => g.statuses.includes(t.status)),
+  }));
+  const otherTasks = (data ?? []).filter(
+    (t) => !TASK_GROUPS.some((g) => g.statuses.includes(t.status)),
+  );
+
   return (
-    <div>
-      <div className="mb-3 flex justify-end">
+    <section>
+      <div className="mb-1.5 flex items-center justify-between">
+        <SectionLabel>Care tasks</SectionLabel>
         <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
           <Plus size={13} /> New task
         </Button>
@@ -33,36 +49,63 @@ export default function TasksTab() {
       {isError && <ErrorState message={errorMessage(error)} />}
       {!isLoading && !isError && (!data || data.length === 0) && <EmptyState title="No care tasks" />}
       {!isLoading && !isError && data && data.length > 0 && (
-        <Table>
-          <thead>
-            <tr>
-              <Th>Task</Th>
-              <Th>Type</Th>
-              <Th>Priority</Th>
-              <Th>Status</Th>
-              <Th>Assigned to</Th>
-              <Th>Due</Th>
-              <Th />
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((t) => (
-              <Tr key={t.id} onClick={() => setEditing(t)}>
-                <Td className="font-medium">{t.title}</Td>
-                <Td>{LABELS.taskType[t.task_type] ?? t.task_type}</Td>
-                <Td><Badge variant={priorityVariant(t.priority)}>{t.priority}</Badge></Td>
-                <Td><Badge variant={statusVariant(t.status)}>{humanize(t.status)}</Badge></Td>
-                <Td>{t.assigned_to ?? "—"}</Td>
-                <Td>{t.due_at ? formatDateTime(t.due_at) : "—"}</Td>
-                <Td />
-              </Tr>
-            ))}
-          </tbody>
-        </Table>
+        <div className="flex flex-col gap-4">
+          {grouped.map(
+            ({ label, tasks }) =>
+              tasks.length > 0 && (
+                <TaskGroup key={label} label={label} tasks={tasks} onSelect={setEditing} />
+              ),
+          )}
+          {otherTasks.length > 0 && <TaskGroup label="Other" tasks={otherTasks} onSelect={setEditing} />}
+        </div>
       )}
 
       <CreateTaskModal patientId={patientId} open={createOpen} onClose={() => setCreateOpen(false)} />
       {editing && <EditTaskModal task={editing} onClose={() => setEditing(null)} />}
+    </section>
+  );
+}
+
+function TaskGroup({
+  label,
+  tasks,
+  onSelect,
+}: {
+  label: string;
+  tasks: CareTask[];
+  onSelect: (task: CareTask) => void;
+}) {
+  return (
+    <div>
+      <div className="px-1 pb-1 text-[11px] font-medium text-text-tertiary">
+        {label} · {tasks.length}
+      </div>
+      <Table>
+        <thead>
+          <tr>
+            <Th>Task</Th>
+            <Th>Type</Th>
+            <Th>Priority</Th>
+            <Th>Status</Th>
+            <Th>Assigned to</Th>
+            <Th>Due</Th>
+            <Th />
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((t) => (
+            <Tr key={t.id} onClick={() => onSelect(t)}>
+              <Td className="font-medium">{t.title}</Td>
+              <Td>{LABELS.taskType[t.task_type] ?? t.task_type}</Td>
+              <Td><Badge variant={priorityVariant(t.priority)}>{t.priority}</Badge></Td>
+              <Td><Badge variant={statusVariant(t.status)}>{humanize(t.status)}</Badge></Td>
+              <Td>{t.assigned_to ?? "—"}</Td>
+              <Td>{t.due_at ? formatDateTime(t.due_at) : "—"}</Td>
+              <Td />
+            </Tr>
+          ))}
+        </tbody>
+      </Table>
     </div>
   );
 }
@@ -77,7 +120,6 @@ function CreateTaskModal({ patientId, open, onClose }: { patientId: string; open
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["care-tasks", patientId] });
       qc.invalidateQueries({ queryKey: ["chart", patientId] });
-      qc.invalidateQueries({ queryKey: ["all-care-tasks"] });
       toast.success("Task created");
       onClose();
       setForm({ task_type: "call_snf", title: "", description: "", priority: "medium", assigned_to: "" });
@@ -103,7 +145,7 @@ function CreateTaskModal({ patientId, open, onClose }: { patientId: string; open
           <TextArea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </Field>
         <Field label="Assigned to">
-          <TextInput value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })} placeholder="Agent or human name" />
+          <TextInput value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })} placeholder="Placer or clinician name" />
         </Field>
         <div className="mt-2 flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
@@ -125,7 +167,6 @@ function EditTaskModal({ task, onClose }: { task: CareTask; onClose: () => void 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["care-tasks", task.patient_id] });
       qc.invalidateQueries({ queryKey: ["chart", task.patient_id] });
-      qc.invalidateQueries({ queryKey: ["all-care-tasks"] });
       toast.success("Task updated");
       onClose();
     },

@@ -7,7 +7,7 @@ agents can be reset and repeated.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from .. import config
@@ -31,16 +31,13 @@ def stats(session: Session = Depends(get_session)) -> dict:
     "/reset",
     summary="Reset the database to the seed state",
     description=(
-        "Drops all data and reseeds from scratch: the 25 imported FHIR patients "
-        "plus the active 'hero' inpatients and facilities. Use between demo runs "
-        "to return to a known state. Set `heroes_only=true` to skip the imported "
-        "cohort for a faster reset."
+        "Drops all data and reseeds from scratch: the active 'hero' inpatients "
+        "and the facility directory. Use between demo runs to return to a known "
+        "state."
     ),
 )
-def reset(
-    heroes_only: bool = Query(False, description="Skip importing the 25 FHIR patients"),
-) -> dict:
+def reset() -> dict:
     if not config.ALLOW_RESET:
-        raise HTTPException(status_code=403, detail="Reset is disabled (set EHR_ALLOW_RESET=true to enable)")
-    counts = reset_and_seed(include_heroes=True, include_fhir=not heroes_only)
+        raise HTTPException(status_code=403, detail="Reset is disabled (set ILIAD_ALLOW_RESET=true to enable)")
+    counts = reset_and_seed()
     return {"status": "reset complete", "row_counts": counts}

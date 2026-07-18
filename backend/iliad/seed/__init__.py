@@ -1,13 +1,11 @@
 """Seeding and reset orchestration.
 
-``reset_and_seed`` is the single primitive shared by the CLI (`ehr reset`) and
+``reset_and_seed`` is the single primitive shared by the CLI (`iliad reset`) and
 the admin endpoint (`POST /admin/reset`). It always drops, recreates, and
 reseeds so a demo can be re-run from a known state as many times as needed.
 """
 
 from __future__ import annotations
-
-from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -26,11 +24,11 @@ from ..models import (
     Observation,
     Order,
     Patient,
+    PlacerMessage,
     Procedure,
 )
 from .facilities import seed_facilities
-from .fhir_import import import_fhir_file
-from .hero_patients import seed_hero_patients
+from .heroes import seed_hero_patients
 
 _COUNT_MODELS = {
     "patients": Patient,
@@ -47,6 +45,7 @@ _COUNT_MODELS = {
     "facilities": Facility,
     "care_tasks": CareTask,
     "communications": Communication,
+    "placer_messages": PlacerMessage,
 }
 
 
@@ -60,7 +59,7 @@ def row_counts(session: Session) -> dict[str, int]:
     return counts
 
 
-def reset_and_seed(include_heroes: bool = True, include_fhir: bool = True) -> dict[str, int]:
+def reset_and_seed(include_heroes: bool = True) -> dict[str, int]:
     """Drop everything, recreate the schema, and reseed. Returns row counts.
 
     Seeding runs with SQLite foreign-key enforcement disabled on the loading
@@ -73,8 +72,6 @@ def reset_and_seed(include_heroes: bool = True, include_fhir: bool = True) -> di
     with fk_enforcement(False):
         with Session(engine) as session:
             seed_facilities(session)
-            if include_fhir:
-                import_fhir_file(session)
             if include_heroes:
                 seed_hero_patients(session)
             session.commit()

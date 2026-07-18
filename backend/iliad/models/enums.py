@@ -195,3 +195,10 @@ class PartyType(str, Enum):
     pcp = "pcp"
     insurance = "insurance"
     other = "other"
+
+
+class PlacerMessageSender(str, Enum):
+    """Who wrote a message in the per-patient provider <-> Placer chat thread."""
+
+    provider = "provider"
+    placer = "placer"

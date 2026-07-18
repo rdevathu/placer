@@ -1,9 +1,9 @@
-# Placer EHR — Backend
+# Iliad — Backend
 
-A lightweight, Epic-like **dummy EHR** exposed as a REST API over a single
-SQLite database. Built so healthcare agents (and a later frontend) can reliably
-traverse a patient's chart and take clinical actions, for a discharge-disposition
-planning demo. All data is synthetic.
+**Iliad** is a lightweight, Epic-like demo EHR exposed as a REST API over a
+single SQLite database. It exists so **Placer** (the disposition-planning
+product built in parallel) and the Iliad frontend can reliably traverse a
+patient's chart and take clinical actions. All data is synthetic.
 
 - **Stack:** FastAPI · SQLModel/SQLAlchemy 2.0 · SQLite · Pydantic v2 (Python 3.9+)
 - **Docs:** interactive Swagger at `/docs`, ReDoc at `/redoc`, schema at `/openapi.json`
@@ -16,43 +16,51 @@ cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-python -m ehr.cli reset             # drop + recreate + seed (FHIR + hero patients)
-python -m ehr.cli serve --reload    # http://localhost:8000/docs
-pytest -q                           # end-to-end API tests
+python -m iliad.cli reset             # drop + recreate + seed
+python -m iliad.cli serve --reload    # http://localhost:8000/docs
+pytest -q                             # end-to-end API tests
 ```
 
-The app also auto-seeds an empty database on startup, so `uvicorn ehr.main:app`
+The app also auto-seeds an empty database on startup, so `uvicorn iliad.main:app`
 alone works too.
 
 ### CLI
 
 ```bash
-python -m ehr.cli reset [--no-fhir] [--no-heroes]   # rebuild the database
-python -m ehr.cli seed [--force]                    # seed if empty
-python -m ehr.cli stats                             # row counts per table
-python -m ehr.cli serve [--host H --port P --reload]
+python -m iliad.cli reset [--no-heroes]               # rebuild the database
+python -m iliad.cli seed [--force]                    # seed if empty
+python -m iliad.cli stats                             # row counts per table
+python -m iliad.cli serve [--host H --port P --reload]
 ```
+
+### Configuration (env vars, all optional)
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `ILIAD_DATABASE_PATH` | `backend/iliad.db` | SQLite file location |
+| `ILIAD_AUTO_SEED` | `true` | Seed on startup if DB is empty |
+| `ILIAD_ALLOW_RESET` | `true` | Enable `POST /admin/reset` |
+| `ILIAD_SQL_ECHO` | `false` | Log SQL |
 
 ## Data model
 
-Two provenances live side by side (see `CLAUDE.md` for why they're separated):
+The seed is the demo: **4 synthesized hero patients**, each an **active
+inpatient** (`encounter.status=in-progress`) with a deep chart — prior
+inpatient and outpatient encounters, long realistic H&Ps, daily progress
+notes, discharge summaries, and family-communication notes. Fixed IDs/MRNs so
+scripts can hardcode them:
 
-- **Imported history** — 25 Synthea patients from `synthetic-examples/`, all
-  historical (`encounter.status=finished`).
-- **Hero patients** — 4 synthesized **active** inpatients
-  (`encounter.status=in-progress`) with disposition signal. Fixed IDs/MRNs:
-
-  | ID | MRN | Likely disposition |
-  |----|-----|--------------------|
-  | `hero-a-stroke` | MRN90001 | SNF |
-  | `hero-b-chf` | MRN90002 | Home + home health |
-  | `hero-c-hospice` | MRN90003 | Hospice |
-  | `hero-d-ambiguous` | MRN90004 | Undetermined |
+| ID | MRN | Likely disposition |
+|----|-----|--------------------|
+| `hero-a-stroke` | MRN90001 | SNF |
+| `hero-b-chf` | MRN90002 | Home + home health |
+| `hero-c-hospice` | MRN90003 | Hospice |
+| `hero-d-ambiguous` | MRN90004 | Undetermined |
 
 Tables: `patients`, `encounters`, `conditions`, `observations` (vitals + labs),
 `diagnostic_reports`, `medications`, `procedures`, `immunizations`, `notes`,
-`orders`, and the disposition domain: `dispo_assessments`, `care_tasks`,
-`facilities`, `communications`.
+`orders`, and the Placer domain: `dispo_assessments`, `care_tasks`,
+`facilities`, `communications`, `placer_messages`.
 
 ## Key workflows
 
@@ -60,9 +68,9 @@ Tables: `patients`, `encounters`, `conditions`, `observations` (vitals + labs),
 ```
 GET /patients/{id}/chart
 ```
-Returns demographics, active encounter, active problems, current meds, latest
-vitals (one per type), pending + abnormal labs, current disposition prediction,
-and open care tasks.
+Returns demographics (incl. phone, address, emergency contact), active
+encounter, active problems, current meds, latest vitals (one per type),
+pending + abnormal labs, current disposition prediction, and open care tasks.
 
 **Order lifecycle** — `draft` (pended) → `signed` → `completed` | `cancelled`:
 ```
@@ -80,6 +88,13 @@ POST /dispo-assessments   { patient_id, predicted_disposition, confidence, ratio
 GET  /patients/{id}/dispo-assessments/current
 ```
 
+**Placer chat** — the per-patient thread between the care team and Placer:
+```
+GET  /patients/{id}/placer/messages          # ascending created_at
+POST /patients/{id}/placer/messages          { sender: "provider"|"placer", sender_name, text }
+```
+No auto-reply is generated; Placer responds asynchronously.
+
 **Placement search / calls:**
 ```
 GET   /facilities?facility_type=snf&has_available_beds=true&accepts_covid_positive=false
@@ -90,7 +105,7 @@ POST  /care-tasks          { task_type, title }      # the worklist
 
 **Reset between demo runs:**
 ```
-POST /admin/reset          # or: python -m ehr.cli reset
+POST /admin/reset          # or: python -m iliad.cli reset
 ```
 
 ## Full endpoint reference
@@ -144,6 +159,10 @@ POST /admin/reset          # or: python -m ehr.cli reset
 - `GET    /care-tasks` (`patient_id`, `status`, `task_type`, `assigned_to`)
 - `GET    /care-tasks/{id}` · `POST /care-tasks` · `PATCH /care-tasks/{id}`
 
+### placer
+- `GET    /patients/{id}/placer/messages` — The provider↔Placer chat thread
+- `POST   /patients/{id}/placer/messages` — Append a message
+
 ### communications
 - `GET    /communications` (`patient_id`, `care_task_id`, `facility_id`)
 - `GET    /communications/{id}` · `POST /communications`
@@ -157,5 +176,5 @@ POST /admin/reset          # or: python -m ehr.cli reset
   exact strings. Illegal state transitions return **409** with the allowed states.
 - Responses omit the bulky `raw_fhir` field by default; pass `?include_raw=true`
   on detail endpoints to get the original FHIR.
-- Imported medications are sparse (Synthea drug references don't resolve to
-  names). Hero patients carry clean, coded meds. Prefer the `display` field.
+- The agent identity string used in seeded data (`assessed_by`, `assigned_to`)
+  is **`Placer`**.
