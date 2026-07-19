@@ -43,31 +43,64 @@ export function DispositionSection() {
               {d.confidence != null && <span className="text-[11.5px] text-text-tertiary">{Math.round(d.confidence * 100)}% confidence</span>}
               <span className="ml-auto text-[11px] text-text-tertiary">{formatDateTime(d.created_at)}</span>
             </div>
-            {d.rationale && <p className="mt-2 text-[12.5px] leading-relaxed text-text-secondary">{d.rationale}</p>}
+            {d.rationale && <p className="mt-2.5 text-[12.5px] leading-relaxed text-text-secondary">{d.rationale}</p>}
             {d.barriers && d.barriers.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {d.barriers.map((b, i) => (
-                  <Badge key={i} variant="warning">{b}</Badge>
-                ))}
+              <div className="mt-3">
+                <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-text-tertiary">Barriers</div>
+                <ul className="flex flex-col gap-1.5">
+                  {d.barriers.map((b, i) => (
+                    <BarrierRow key={i} text={b} />
+                  ))}
+                </ul>
               </div>
             )}
             {d.alternatives && d.alternatives.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {d.alternatives.map((a, i) => (
-                  <Badge key={i} variant="neutral">
-                    {LABELS.dispositionType[a.disposition] ?? a.disposition}
-                    {a.confidence != null ? ` (${Math.round(a.confidence * 100)}%)` : ""}
-                  </Badge>
-                ))}
+              <div className="mt-3">
+                <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-text-tertiary">Alternatives considered</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {d.alternatives.map((a, i) => (
+                    <Badge key={i} variant="neutral">
+                      {LABELS.dispositionType[a.disposition] ?? a.disposition}
+                      {a.confidence != null ? ` · ${Math.round(a.confidence * 100)}%` : ""}
+                    </Badge>
+                  ))}
+                </div>
               </div>
             )}
-            {d.assessed_by && <p className="mt-2 text-[11px] text-text-tertiary">Assessed by {d.assessed_by}</p>}
+            {d.assessed_by && <p className="mt-3 border-t border-border pt-2 text-[11px] text-text-tertiary">Assessed by {d.assessed_by}</p>}
           </Card>
         ))}
       </div>
 
       <CreateDispoModal patientId={patientId} open={createOpen} onClose={() => setCreateOpen(false)} />
     </section>
+  );
+}
+
+// Barriers follow a "category: text" convention (e.g. "payer: prior auth required").
+// Render the category as a small colored tag and let the description wrap, so long
+// sentences no longer overflow the card the way a nowrap pill would.
+const BARRIER_CATEGORY_COLORS: Record<string, string> = {
+  medical: "bg-danger-soft text-danger",
+  payer: "bg-warning-soft text-warning",
+  decision: "bg-accent-soft text-accent",
+  destination: "bg-success-soft text-success",
+  logistics: "bg-bg-inset text-text-secondary",
+};
+
+function BarrierRow({ text }: { text: string }) {
+  const match = /^([a-z][\w -]{0,20}):\s*(.+)$/is.exec(text.trim());
+  const category = match ? match[1].toLowerCase().trim() : null;
+  const body = match ? match[2].trim() : text.trim();
+  const color = (category && BARRIER_CATEGORY_COLORS[category]) || "bg-bg-inset text-text-secondary";
+
+  return (
+    <li className="flex items-start gap-2 rounded-md border border-border bg-bg-inset/40 px-2.5 py-1.5">
+      <span className={`mt-px inline-flex w-[82px] shrink-0 items-center justify-center rounded px-1.5 py-1 text-[10px] font-semibold uppercase tracking-wide leading-none ${color}`}>
+        {category ?? "barrier"}
+      </span>
+      <span className="min-w-0 flex-1 break-words text-[12px] leading-relaxed text-text-secondary">{body}</span>
+    </li>
   );
 }
 

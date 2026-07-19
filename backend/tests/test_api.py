@@ -110,7 +110,7 @@ def test_chart_aggregate(client):
     assert r.status_code == 200
     chart = r.json()
     assert chart["active_encounter"]["status"] == "in-progress"
-    assert chart["current_disposition"]["predicted_disposition"] == "snf"
+    assert chart["current_disposition"]["predicted_disposition"] == "undetermined"
     assert any(l["status"] == "pending" for l in chart["pending_labs"])
     assert len(chart["active_problems"]) >= 3
     # raw_fhir is stripped from list payloads by default.

@@ -1,10 +1,19 @@
 """Hero A — Rosa Alvarez, 78F, acute ischemic stroke.
 
-The classic SNF-placement storyline: previously independent widow in a
-second-floor walk-up, now with dense left hemiparesis and dysphagia, daughter
-out of state, Medicare Advantage plan, target SNF requiring a COVID PCR that is
-still pending. Prior chart: a 2024 TIA admission (the warning shot), a
-cardiology follow-up, and a PCP annual — so agents have real history to read.
+The SNF-placement storyline, staged for a *live* demo. Previously independent
+widow in a second-floor walk-up, now with dense left hemiparesis and dysphagia,
+daughter out of state, Medicare Advantage plan. The seeded chart deliberately
+stops *before* she is placement-ready: over hospital days 1-3 she develops an
+aspiration pneumonia and is still acutely ill, NPO, and medically unstable, so
+disposition is undetermined and Placer is only monitoring — it has NOT started
+calling facilities. The demo driver signs one short "turned the corner /
+medically stable, needs subacute rehab" progress note in real time; that single
+note is what flips the prediction to SNF and lets Placer begin its outreach.
+Nothing about the SNF call, the COVID requirement, or the resulting order is
+pre-seeded — those emerge live from the agent's own work.
+
+Prior chart: a 2024 TIA admission (the warning shot), a cardiology follow-up,
+and a PCP annual — so agents have real history to read.
 """
 
 from __future__ import annotations
@@ -14,7 +23,6 @@ from datetime import datetime, timedelta
 from sqlmodel import Session
 
 from ...models import (
-    CareTask,
     DispoAssessment,
     Observation,
     Order,
@@ -85,7 +93,7 @@ HP_CURRENT = """# Neurology History & Physical
 2. **Dysphagia:** Failed bedside swallow. Speech-language pathology consulted; video swallow ordered. NPO except modified diet per SLP; aspiration precautions.
 3. **Left hemiparesis / deconditioning:** PT/OT evaluation and daily therapy. Fall precautions.
 4. **Hypertension / hyperlipidemia:** As above; recheck lipids in 3 months.
-5. **Disposition:** Major open problem. She lives alone in a second-floor walk-up with no elevator and was previously independent — she cannot return to that apartment requiring maximal assistance for transfers. Anticipate skilled nursing facility placement for subacute rehab; if her therapy tolerance improves toward 3 hours/day, acute inpatient rehab (IRF) could be considered, which would require a PM&R consult to certify. Her daughter (Miami, FL) is her only family and cannot provide in-home care locally. Insurance is Tufts Medicare Preferred — SNF benefit requires plan authorization; case management aware. Target SNFs require a negative COVID PCR within 48 hours of admission — test pending. Social work to contact daughter regarding facility preference.
+5. **Disposition:** Too early to determine. She is at the very start of an acute stroke admission with a severe deficit, an unsafe swallow, and maximal-assistance needs, and she is nowhere near medically stable for a discharge decision. She lives alone in a second-floor walk-up and was previously independent, so her eventual path will depend heavily on how she stabilizes medically and how she tolerates rehab over the coming days; it is premature to name a destination now. Case management notified for early awareness only — no placement planning at this stage. Her daughter (Miami, FL) is her only family, is aware of the admission, and cannot provide in-home care locally.
 """
 
 PROG_D1 = """# Neurology Progress Note — Hospital Day 1
@@ -99,48 +107,50 @@ PROG_D1 = """# Neurology Progress Note — Hospital Day 1
 - Strict NPO pending speech evaluation today; IV fluids.
 - PT/OT consults placed; evaluations expected tomorrow.
 - Foley avoided; bladder scans. DVT prophylaxis with heparin SQ.
-- Dispo: flagged early as high placement risk — lives alone, second-floor walk-up. Case management and social work notified on admission. Daughter in Florida aware she is hospitalized.
+- Dispo: too early to plan — she remains acutely ill, NPO, and at high deficit. Case management notified for awareness only; no placement work initiated. Daughter in Florida aware she is hospitalized.
 
 — Dr. Priya Nadkarni, Neurology
 """
 
 PROG_D2 = """# Neurology Progress Note — Hospital Day 2
 
-**Subjective:** "The therapists worked me hard." Reports her swallow feels safer with thicker liquids. Mood fair; asked when she can go home, then acknowledged she "knows the stairs are a problem."
+**Subjective:** More somnolent this afternoon and coughing during her morning swallow trial. Family telephoned for an update.
 
-**Objective:** T 37.0, HR 80, BP 154/82, SpO2 96% RA. NIHSS 12. Left deltoid now 1-2/5, left hip flexion 2/5. Video swallow (SLP): moderate oropharyngeal dysphagia with silent aspiration of thin liquids; safe for nectar-thick liquids and moist ground solids with chin-tuck. PT eval: maximal assist x2 for bed-to-chair transfers, unable to ambulate; sitting balance fair. OT eval: maximal assist for lower-body dressing and toileting; standing tolerance under one minute.
+**Objective:** T 38.1, HR 96, BP 150/84, SpO2 93% on 2L nasal cannula (was 96% on room air yesterday). NIHSS 12. Left deltoid 1/5, left hip flexion 2/5 — unchanged. Lungs: new right basilar crackles. CXR: right lower lobe opacity concerning for aspiration pneumonia. WBC 13.2. Video swallow (SLP): moderate-to-severe oropharyngeal dysphagia with silent aspiration of thin liquids — recommends strict NPO for now, re-evaluate later this week.
 
-**Assessment/Plan:** Right MCA stroke, day 2, small early motor gains.
-- Advance to dysphagia diet per SLP (nectar-thick liquids, ground solids); aspiration precautions; daily SLP treatment.
-- Daily PT/OT; therapy notes document current tolerance ~45-60 min/day — below IRF threshold at present, favoring SNF-level rehab.
-- Resume lisinopril 10 mg today; BP goal <160/90 this week.
-- Dispo: case management screening SNFs with Tufts Medicare Preferred contracts near Chelsea so her neighbor and church community can visit. COVID PCR sent (SNF admission requirement). Social work to call daughter today regarding preference.
+**Assessment/Plan:** Right MCA stroke, day 2, now complicated by a new fever, hypoxia, and a RLL infiltrate — concern for aspiration pneumonia.
+- Blood cultures drawn; started empiric ceftriaxone for aspiration pneumonia. Supplemental O2 to keep SpO2 ≥94%.
+- Strict NPO; aspiration precautions; SLP to re-assess swallow only after the pneumonia is treated. IV fluids and IV medications.
+- Continue aspirin and atorvastatin; hold aggressive BP lowering while febrile.
+- PT/OT deferred today given acute illness; resume once she is more stable.
+- Dispo: not medically ready for any discharge planning — actively treating pneumonia. Disposition deferred; will revisit once she stabilizes and her swallow is re-assessed.
 
 — Dr. Priya Nadkarni, Neurology
 """
 
 PROG_D3 = """# Neurology Progress Note — Hospital Day 3
 
-**Subjective:** Brighter today. Tolerating the modified diet without coughing. Worked with PT this morning; stood at the parallel bars with two assist for nearly two minutes.
+**Subjective:** Slightly more alert this morning but still fatigued. No further coughing spells overnight. Remains NPO.
 
-**Objective:** T 36.9, HR 82, BP 148/80, SpO2 96% RA. NIHSS 11. Left hip flexion 3/5 today; arm unchanged. Taking >75% of meals on the dysphagia diet. Telemetry remains sinus. COVID PCR: still pending in lab.
+**Objective:** T 37.6, HR 88, BP 152/82, SpO2 95% on 1L nasal cannula. NIHSS 11. Left hip flexion 3/5; arm unchanged. Lungs with improving but still-present right basilar crackles. Ceftriaxone day 2 for aspiration pneumonia; blood cultures pending, no growth to date. Repeat WBC 11.0. Still NPO pending a repeat swallow study.
 
-**Assessment/Plan:** Right MCA stroke, day 3, slow steady improvement; medically stable for discharge to subacute rehab once placement clears.
-- Continue aspirin/statin/lisinopril; discontinue telemetry today, 30-day monitor ordered at discharge.
-- PT/OT/SLP daily; therapy tolerance improving but still well under 3 h/day.
-- Swallow: SLP will re-titrate diet before discharge; likely discharges on nectar-thick liquids.
-- Dispo: SNF placement is the working plan — Sunny Acres (Chelsea) is the preferred in-network option, with bed availability still to be confirmed; target SNFs require a negative COVID PCR within 48h, result pending. Social work spoke with daughter yesterday (see separate note) — family favors Sunny Acres. Anticipate discharge early next week if PCR results and the plan authorizes.
+**Assessment/Plan:** Right MCA stroke, day 3, with aspiration pneumonia under treatment — improving but not resolved; still an acute inpatient.
+- Continue ceftriaxone; trend fevers and WBC; follow up the pending blood cultures.
+- Remain strict NPO; SLP to repeat the swallow study once she is afebrile and the pneumonia has clearly turned the corner.
+- Resume gentle bedside PT/OT as tolerated; tolerance limited today by her acute illness.
+- Continue aspirin/atorvastatin/lisinopril; telemetry sinus.
+- Dispo: pneumonia and an unsafe swallow keep her here — not appropriate for discharge or placement planning yet. Will reassess disposition once she is medically stable and cleared to eat.
 
 — Dr. Priya Nadkarni, Neurology
 """
 
 FAM_CURRENT = """# Social Work — Family Communication
 
-Telephone call with Marisol Alvarez-Reyes (daughter, sole family contact, lives in Miami, FL; number on file), approximately 25 minutes.
+Telephone call with Marisol Alvarez-Reyes (daughter, sole family contact, lives in Miami, FL; number on file), approximately 15 minutes.
 
-Reviewed her mother's stroke, current function (maximal assistance for transfers, modified diet), and the team's recommendation for skilled nursing facility rehab. Daughter was tearful but engaged. She confirmed her mother cannot manage the second-floor walk-up as she is now, and that she herself cannot relocate to Boston; she works full-time and has two school-age children. We discussed two paths: (1) subacute rehab at a SNF near Chelsea, with a later re-assessment about returning home with services or considering assisted living; (2) eventually moving her mother to Florida to live near her — daughter feels this is premature and her mother "would refuse to leave Chelsea." She prefers Sunny Acres given proximity to her mother's neighbor and church community, and asked about Tufts Medicare Preferred coverage of the SNF stay; I explained plan authorization is being pursued by case management. Daughter will call her mother daily and can fly up on short notice for a family meeting if needed.
+Updated the daughter on her mother's course: the stroke left significant left-sided weakness and an unsafe swallow, and over the last day she has developed a pneumonia from aspiration that the team is now treating with antibiotics. She remains acutely ill, NPO, and is being kept in the hospital while this is treated. Daughter was worried and asked whether her mother would be able to go home; I explained it is too early to know — the team needs to get her through the pneumonia and re-check her swallow before anyone can discuss what happens after the hospital. Daughter confirmed she cannot relocate to Boston and that her mother lives alone in a second-floor walk-up. She asked to be kept closely updated and will continue calling her mother daily. No placement decisions were discussed at this stage.
 
-Plan: relay preference to case management; update daughter when the COVID PCR results and a bed date is set.
+Plan: continue daily updates to the daughter; revisit disposition planning once Mrs. Alvarez is medically stable.
 
 — Karen Mullaney, LICSW
 """
@@ -266,37 +276,17 @@ PCP_NOTE = """# Primary Care — Annual Visit
 # ---------------------------------------------------------------------------
 
 CHAT = [
-    ("placer", "Placer", -35.0,
-     "I've reviewed Ms. Alvarez's chart. Predicting SNF (78% confidence): dense left hemiparesis, "
-     "max-assist transfers, lives alone in a 2nd-floor walk-up, only family is out of state. I'm "
-     "verifying her Tufts Medicare Preferred SNF authorization and starting outreach to in-network "
-     "facilities near Chelsea."),
-    ("placer", "Placer", -19.0,
-     "Sunny Acres Skilled Nursing (Chelsea) looks like the strongest in-network lead for her — close "
-     "to her neighbor and church community, and it contracts with Tufts Medicare Preferred. I've "
-     "queued outreach to verify current bed availability and confirm their COVID-test requirement; I "
-     "haven't reached them yet. Separately, target SNFs generally require a negative COVID PCR within "
-     "48h of admission — hers was collected but is still pending, so I'll flag it the moment it "
-     "results."),
-    ("placer", "Placer", -8.0,
-     "Two questions for the team: (1) Should I draft a PM&R consult to keep the acute-rehab (IRF) "
-     "option open at Bayview in case her therapy tolerance improves past 3h/day? (2) What target "
-     "discharge date should I plan around, so I can frame the SNF outreach and transport once "
-     "placement and the PCR clear?"),
-    ("provider", "Dr. Priya Nadkarni", -5.0,
-     "Yes — please pend the PM&R consult and I'll sign on rounds. Realistically she stays SNF-level, "
-     "but keep IRF open. Target discharge Monday 7/20 if swallow keeps improving. SW note says the "
-     "daughter prefers Sunny Acres."),
-    ("placer", "Placer", -4.0,
-     "Got it. I'll pend the PM&R consult for your signature shortly and target Monday 7/20 as the "
-     "working discharge date. I'll reach out to Sunny Acres to verify a bed and their COVID "
-     "requirement, confirm the plan with her daughter Marisol this afternoon, and keep the "
-     "authorization moving with Tufts."),
-    ("placer", "Placer", -2.0,
-     "Update: outreach to Sunny Acres is still pending — no bed confirmed yet. Once the PCR results "
-     "and the plan authorizes, I can move quickly on placement and same-day transport. Remaining "
-     "barriers: SNF outreach to confirm a bed, pending COVID PCR, plan authorization, and the PM&R "
-     "consult signature."),
+    ("placer", "Placer", -30.0,
+     "I've reviewed Ms. Alvarez's chart. Acute right MCA stroke with dense left hemiparesis and an "
+     "unsafe swallow — and she's now being treated for an aspiration pneumonia. She's still early and "
+     "medically unstable (febrile, NPO), so it's too soon to call a discharge disposition. I'm "
+     "monitoring and will reassess as she stabilizes."),
+    ("provider", "Dr. Priya Nadkarni", -26.0,
+     "Agreed — she's nowhere near discharge. Let's hold on any placement planning until the pneumonia "
+     "is sorted and her swallow is re-checked."),
+    ("placer", "Placer", -24.0,
+     "Understood — holding all outreach. I'll flag you the moment she looks medically stable and ready "
+     "for discharge planning."),
 ]
 
 
@@ -333,7 +323,7 @@ def build(session: Session) -> None:
         visit_title="Inpatient admission — acute ischemic stroke",
         reason_text="Acute ischemic stroke with left-sided weakness",
         location_display="7 West — Neurology", attending_name="Dr. Priya Nadkarni",
-        disposition_status="predicted",
+        disposition_status="undetermined",
     )
     encounter(
         session, id=ENC_TIA, patient_id=PID, class_code="IMP",
@@ -379,8 +369,40 @@ def build(session: Session) -> None:
     med(session, PID, ENC_CURRENT, "Atorvastatin", "80 mg", "PO", "nightly", ADMIT)
     med(session, PID, ENC_CURRENT, "Lisinopril", "10 mg", "PO", "daily", ADMIT + timedelta(days=1))
 
-    # No COVID test at admission: the SNF's COVID requirement surfaces during
-    # Placer's placement call and Placer drafts the order dynamically from it.
+    # --- Pending blood cultures (aspiration-pneumonia workup) + order ------
+    # A neutral, physician-authored pending lab that fits the "still acute"
+    # story. Deliberately NOT a COVID PCR: the SNF's COVID requirement (and the
+    # order that satisfies it) must emerge live from Placer's own call, not the
+    # seed.
+    bcx = Observation(
+        id="obs-hero-a-bcx",
+        patient_id=PID,
+        encounter_id=ENC_CURRENT,
+        category="laboratory",
+        loinc_code="600-7",
+        display="Bacteria identified in Blood by Culture",
+        status="pending",
+        effective_time=NOW - timedelta(hours=20),
+    )
+    session.add(bcx)
+    session.add(
+        Order(
+            id="ord-hero-a-bcx",
+            patient_id=PID,
+            encounter_id=ENC_CURRENT,
+            order_type="lab",
+            status="signed",
+            code="600-7",
+            display="Blood culture x2",
+            detail="Aspiration pneumonia workup — new fever and RLL infiltrate.",
+            priority="routine",
+            ordered_by="Dr. Priya Nadkarni",
+            signed_by="Dr. Priya Nadkarni",
+            authored_at=NOW - timedelta(hours=20),
+            signed_at=NOW - timedelta(hours=20),
+            result_observation_id="obs-hero-a-bcx",
+        )
+    )
 
     # --- Notes ------------------------------------------------------------
     # Current admission: H&P + one progress note per hospital day, no DC summary.
@@ -438,59 +460,38 @@ def build(session: Session) -> None:
          signed_at=PCP_START + timedelta(minutes=40), text=PCP_NOTE)
 
     # --- Dispo domain -----------------------------------------------------
+    # Starting posture for the live demo: undetermined. She is still an acute
+    # inpatient, so Placer is only monitoring — no predicted destination, no
+    # care tasks, no facility calls yet. The real-time "medically stable, needs
+    # subacute rehab" progress note is what flips this to SNF and lets the agent
+    # begin its outreach; everything downstream is created live, not seeded.
     session.add(
         DispoAssessment(
             id="dispo-hero-a",
             patient_id=PID,
             encounter_id=ENC_CURRENT,
-            predicted_disposition="snf",
-            confidence=0.78,
+            predicted_disposition="undetermined",
+            confidence=0.4,
             rationale=(
-                "78yo, lives alone (2nd-floor walk-up, no elevator), s/p right MCA stroke with left "
-                "hemiparesis and dysphagia, requires max assist for transfers; only family is out of "
-                "state. Not safe for home. Therapy tolerance (~45-60 min/day) is below the IRF "
-                "threshold, pointing to SNF-level rehab; keep IRF open if tolerance improves."
+                "78yo s/p right MCA stroke with left hemiparesis and dysphagia, now being treated for "
+                "an aspiration pneumonia. She is still an acute inpatient — febrile course, NPO, unsafe "
+                "swallow — and is not medically ready for discharge planning. Too early to commit to a "
+                "pathway. She lives alone in a 2nd-floor walk-up with only out-of-state family, so home "
+                "is unlikely, but disposition will be reassessed once she stabilizes and her swallow is "
+                "re-evaluated."
             ),
             barriers=[
-                "Pending SARS-CoV-2 PCR required by target SNF",
-                "PM&R consult not yet placed",
-                "Tufts Medicare Preferred SNF authorization in progress",
+                "Not medically stable — treating aspiration pneumonia",
+                "Unsafe swallow / NPO — swallow re-evaluation pending",
             ],
             alternatives=[
-                {"disposition": "inpatient_rehab", "confidence": 0.15},
-                {"disposition": "home_with_services", "confidence": 0.05},
+                {"disposition": "snf", "confidence": 0.3},
+                {"disposition": "home_with_services", "confidence": 0.1},
             ],
             assessed_by="Placer",
             is_current=True,
         )
     )
-    session.add_all([
-        CareTask(
-            id="task-hero-a-family",
-            patient_id=PID,
-            encounter_id=ENC_CURRENT,
-            task_type="call_family",
-            title="Call daughter re: SNF preference",
-            description="Confirm preferred SNF and gather insurance details.",
-            status="pending",
-            priority="high",
-            assigned_to="Placer",
-            due_at=NOW + timedelta(hours=6),
-        ),
-        CareTask(
-            id="task-hero-a-snf",
-            patient_id=PID,
-            encounter_id=ENC_CURRENT,
-            task_type="call_snf",
-            title="Call Sunny Acres re: bed availability",
-            description="Verify bed availability and COVID test requirement.",
-            status="pending",
-            priority="high",
-            assigned_to="Placer",
-            related_facility_id="fac-sunny-acres",
-            due_at=NOW + timedelta(hours=4),
-        ),
-    ])
 
     # --- Placer chat ------------------------------------------------------
     for i, (sender, sender_name, hours, text) in enumerate(CHAT, start=1):
