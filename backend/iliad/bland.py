@@ -76,3 +76,24 @@ def place_call(
         raise BlandError(f"Bland rejected the call ({resp.status_code}): {message}")
 
     return data
+
+
+def get_call(call_id: str, timeout: float = 30.0) -> dict:
+    """Fetch a call's status/result from Bland. ``GET /v1/calls/{id}``.
+
+    Used to poll for completion so Placer can act on the transcript without a
+    reachable webhook (Bland's cloud can't reach a localhost demo)."""
+    if not config.BLAND_API_KEY:
+        raise BlandError("BLAND_API_KEY is not configured.")
+    try:
+        resp = httpx.get(
+            f"{config.BLAND_BASE_URL}/v1/calls/{call_id}",
+            headers={"authorization": config.BLAND_API_KEY},
+            timeout=timeout,
+        )
+    except httpx.HTTPError as exc:
+        raise BlandError(f"Could not reach Bland: {exc}") from exc
+    try:
+        return resp.json()
+    except ValueError:
+        return {}
