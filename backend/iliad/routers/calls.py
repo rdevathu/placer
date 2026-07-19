@@ -22,11 +22,15 @@ reports both the intended and the actually-dialed number.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+import time
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session
 
 from .. import bland, config
-from ..db import get_session
+from ..db import engine, get_session
 from sqlmodel import select
 
 from ..events import get_actor, record_event
@@ -36,6 +40,50 @@ from ..schemas import CallRequest
 from ._common import get_or_404, serialize
 
 router = APIRouter(prefix="/calls", tags=["calls"])
+logger = logging.getLogger(__name__)
+
+
+def _await_and_complete(call_id: str, comm_id: str, patient_id: Optional[str]) -> None:
+    """Poll Bland until the call finishes, then attach the transcript and emit a
+    ``call.completed`` event — so Placer acts on the outcome with NO manual step
+    and NO reachable webhook (Bland's cloud can't reach a localhost demo).
+
+    Runs in a background thread after the place-call response returns, so a fresh
+    Session is opened (the request's is already closed)."""
+    for _ in range(120):  # ~10 min at 5s between polls
+        try:
+            data = bland.get_call(call_id)
+        except Exception as exc:
+            logger.warning("bland poll failed for %s: %s", call_id, exc)
+            time.sleep(5)
+            continue
+        done = str(data.get("status") or "").lower() in {"completed", "complete"} or bool(data.get("completed"))
+        if not done:
+            time.sleep(5)
+            continue
+        transcript = data.get("concatenated_transcript") or data.get("transcript") or ""
+        summary = data.get("summary") or (transcript[:500] if transcript else "Call completed.")
+        with Session(engine) as s:
+            comm = s.get(Communication, comm_id)
+            if comm is not None:
+                comm.transcript = transcript or comm.transcript
+                comm.summary = summary
+                comm.outcome = "call_completed"
+                comm.updated_at = utcnow()
+                s.add(comm)
+            record_event(
+                s,
+                "call.completed",
+                patient_id=patient_id,
+                actor="agent:placer",
+                entity_type="communication",
+                entity_id=comm_id,
+                payload={"call_id": call_id, "summary": summary, "transcript": transcript},
+            )
+            s.commit()
+        logger.info("bland call %s completed; call.completed emitted", call_id)
+        return
+    logger.warning("bland call %s did not complete within the poll window", call_id)
 
 
 @router.post(
@@ -131,6 +179,7 @@ def _snf_gate(body: CallRequest, session: Session) -> None:
 )
 def place_call(
     body: CallRequest,
+    background: BackgroundTasks,
     session: Session = Depends(get_session),
     actor: str = Depends(get_actor),
 ) -> dict:
@@ -201,6 +250,12 @@ def place_call(
     )
     session.commit()
     session.refresh(comm)
+
+    # Close the loop automatically: poll Bland for the result and emit
+    # call.completed when it finishes, so Placer drafts any required orders
+    # (e.g. a COVID test) with no manual intervention.
+    if call_id:
+        background.add_task(_await_and_complete, call_id, comm.id, body.patient_id)
 
     return {
         "call_id": call_id,
