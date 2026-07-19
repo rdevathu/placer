@@ -379,36 +379,8 @@ def build(session: Session) -> None:
     med(session, PID, ENC_CURRENT, "Atorvastatin", "80 mg", "PO", "nightly", ADMIT)
     med(session, PID, ENC_CURRENT, "Lisinopril", "10 mg", "PO", "daily", ADMIT + timedelta(days=1))
 
-    # --- Pending COVID PCR (SNF admission requirement) + physician order --
-    covid = Observation(
-        id="obs-hero-a-covid",
-        patient_id=PID,
-        encounter_id=ENC_CURRENT,
-        category="laboratory",
-        loinc_code="94500-6",
-        display="SARS-CoV-2 (COVID-19) RNA [Presence] by NAA",
-        status="pending",
-        effective_time=NOW - timedelta(hours=20),
-    )
-    session.add(covid)
-    session.add(
-        Order(
-            id="ord-hero-a-covid",
-            patient_id=PID,
-            encounter_id=ENC_CURRENT,
-            order_type="lab",
-            status="signed",
-            code="94500-6",
-            display="SARS-CoV-2 (COVID-19) NAA test",
-            detail="SNF admission requirement — result pending.",
-            priority="routine",
-            ordered_by="Dr. Priya Nadkarni",
-            signed_by="Dr. Priya Nadkarni",
-            authored_at=NOW - timedelta(hours=20),
-            signed_at=NOW - timedelta(hours=20),
-            result_observation_id="obs-hero-a-covid",
-        )
-    )
+    # No COVID test at admission: the SNF's COVID requirement surfaces during
+    # Placer's placement call and Placer drafts the order dynamically from it.
 
     # --- Notes ------------------------------------------------------------
     # Current admission: H&P + one progress note per hospital day, no DC summary.
