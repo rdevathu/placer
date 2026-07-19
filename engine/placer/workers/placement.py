@@ -14,7 +14,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from .. import calls
+from .. import calls, config
 from ..models import Referral, utcnow
 from ..registry import load_pathways
 from .common import (
@@ -28,6 +28,7 @@ from .common import (
     get_referral,
     guard_referral,
     notify,
+    parked,
     record_decline,
     short_ref,
 )
@@ -109,6 +110,66 @@ def _is_declined(call) -> bool:
     return any(w in text for w in _DECLINE_MARKERS)
 
 
+def _parked_referral(referral: Referral) -> dict:
+    """Park a referral step that needs a (disabled) real call: no fabricated
+    call, no communication row, no status advance, no bed count — the referral
+    stays exactly where it is, pending real facility outreach."""
+    return parked("calls_disabled", referral_id=referral.id, status=referral.status)
+
+
+_BLAND_CALL_MARKER = "bland-call:"
+
+
+def _facility_is_snf(ehr, facility_id: str) -> bool:
+    return (fetch_facility(ehr, facility_id) or {}).get("facility_type") == "snf"
+
+
+def _place_snf_bland_call(session: Session, ehr, case, referral, task, worker: str) -> dict:
+    """Place ONE real bed-availability call to a SNF via the Iliad /calls
+    endpoint (Bland), then PARK awaiting the real outcome.
+
+    A real call is asynchronous — we do not get a bed count back synchronously,
+    so we fabricate nothing: no bed number, no barrier clear, no status advance.
+    Idempotent: a marker in ``referral.notes`` prevents re-dialing the same
+    facility on a later loop. The backend logs the Communication + call.placed
+    event; the engine must not also write one."""
+    if referral.notes and _BLAND_CALL_MARKER in referral.notes:
+        return parked("snf_call_already_placed", referral_id=referral.id)
+
+    bland_task = (
+        "You are Placer, an AI assistant calling on behalf of County General "
+        f"Hospital's discharge-planning team. You are calling {referral.facility_name}, "
+        "a skilled nursing facility. Politely ask the admissions desk whether they "
+        "currently have any beds available for a patient we are preparing to "
+        "discharge, and whether they require a negative COVID-19 PCR before "
+        "admission. Keep it brief and professional; thank them and end the call."
+    )
+    try:
+        resp = ehr.place_call(
+            patient_id=case.patient_id,
+            task=bland_task,
+            party_type="snf",
+            party_name=f"{referral.facility_name} admissions",
+            facility_id=referral.facility_id,
+            care_task_id=getattr(task, "ehr_care_task_id", None) or get_payload(task).get("ehr_care_task_id"),
+        )
+    except Exception as exc:  # Bland unconfigured / upstream failure: park, never crash the loop
+        notify(session, case.id, f"{worker}: could not place the SNF call to {referral.facility_name} ({exc}); left pending.")
+        return parked("snf_call_failed", referral_id=referral.id, error=str(exc))
+
+    call_id = (resp or {}).get("call_id")
+    append_note(referral, f"{_BLAND_CALL_MARKER}{call_id}")
+    session.add(referral)
+    notify(
+        session,
+        case.id,
+        f"{worker}: placed a real call to {referral.facility_name} (SNF) via Bland to check "
+        f"bed availability and COVID requirement — awaiting the outcome (call {call_id}).",
+    )
+    # Park: the call is placed, the real result is pending — nothing to fabricate.
+    return parked("snf_call_placed", referral_id=referral.id, call_id=call_id)
+
+
 # -- handlers ----------------------------------------------------------------
 
 
@@ -183,6 +244,15 @@ def facility_intake_call(session: Session, task, ehr, worker: str) -> dict:
     guard_referral(referral, {"shortlisted", "intake_verified"}, "facility_intake_call")
     case = get_case(session, referral.case_id)
 
+    # SNF bed-availability outreach goes through Bland as a REAL call (the only
+    # party Placer may dial autonomously). It parks awaiting the real outcome —
+    # no fabricated beds. Everything else falls through to the (disabled by
+    # default) simulated path, which parks when PLACE_CALLS is off.
+    if config.SNF_CALLS and _facility_is_snf(ehr, referral.facility_id):
+        return _place_snf_bland_call(session, ehr, case, referral, task, worker)
+    if not config.PLACE_CALLS:
+        return _parked_referral(referral)
+
     call = calls.place_call(
         objective=f"Verify intake route and current bed capacity at {referral.facility_name}",
         questions=INTAKE_QUESTIONS,
@@ -228,6 +298,8 @@ def facility_screen_call(session: Session, task, ehr, worker: str) -> dict:
     referral = get_referral(session, task)
     guard_referral(referral, {"intake_verified", "shortlisted"}, "facility_screen_call")
     case = get_case(session, referral.case_id)
+    if not config.PLACE_CALLS:
+        return _parked_referral(referral)
     pathway = _pathway(referral.pathway_id)
     questions = pathway.get("requirements") or [
         "Can you meet this patient's clinical needs as described?",
@@ -285,6 +357,11 @@ def submit_referral(session: Session, task, ehr, worker: str) -> dict:
     if referral.status in ("submitted", "pending"):
         return {"referral_id": referral.id, "status": referral.status, "note": "already submitted"}
     guard_referral(referral, {"screened", "conditional"}, "submit_referral")
+    # Submitting a referral packet is an outbound action to the facility (portal
+    # + confirmation). With calls/outreach disabled we must not fabricate a
+    # confirmation number or a "packet submitted" communication — park pending.
+    if not config.PLACE_CALLS:
+        return _parked_referral(referral)
     case = get_case(session, referral.case_id)
 
     confirmation = short_ref("REF")
@@ -316,6 +393,10 @@ def finalize_acceptance(session: Session, task, ehr, worker: str) -> dict:
     referral = get_referral(session, task)
     guard_referral(referral, {"pending", "conditional", "submitted"}, "finalize_acceptance")
     case = get_case(session, referral.case_id)
+    if not config.PLACE_CALLS:
+        # No fabricated acceptance: no bed hold, no bed-count mutation, no
+        # destination-barrier clear. Referral stays pending real confirmation.
+        return _parked_referral(referral)
 
     call = calls.place_call(
         objective=f"Confirm the final acceptance decision for the referral to {referral.facility_name}",

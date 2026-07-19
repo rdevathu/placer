@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session
 
-from ...models import CareTask, Communication, DispoAssessment, Patient
+from ...models import CareTask, DispoAssessment, Patient
 from .common import NOW, condition, encounter, med, note, placer_msg, vital
 
 PID = "hero-c-hospice"
@@ -334,10 +334,12 @@ CHAT = [
      "nights. I'm starting intake with Peaceful Passages (covers Newton, runs both home hospice and "
      "GIP)."),
     ("placer", "Placer", -10.0,
-     "Called Peaceful Passages intake: referral packet received; they can admit to home hospice the "
-     "same day she discharges. Outstanding items: signed hospice election form and the attending's "
-     "certification of terminal illness (CTI). They confirmed continuous-care nursing and respite are "
-     "available for the night-coverage concern, and Medicare covers all of it."),
+     "Peaceful Passages is the hospice I'd plan to use — it serves Newton and runs home hospice, "
+     "continuous care, respite, and GIP under one roof, which matters for this family (per Dr. "
+     "Haddad's consult). I haven't reached their intake yet and no referral is placed. On our side the "
+     "outstanding items are a signed hospice election form and the attending's certification of "
+     "terminal illness (CTI). Her Medicare hospice benefit is available and unrestricted, so I'll want "
+     "to confirm with intake that continuous-care nursing and respite can cover the night concern."),
     ("placer", "Placer", -6.0,
      "Question for the team: the family is leaning home hospice but the daughter's worry is nights. "
      "Should I set up home hospice with GIP named as the explicit backup (per Dr. Haddad's consult), "
@@ -348,9 +350,10 @@ CHAT = [
      "family again this afternoon; hold final confirmation to Peaceful Passages until after that, "
      "but keep everything staged so nothing delays discharge."),
     ("placer", "Placer", -1.0,
-     "Staged and holding: election form prepped for signature, CTI to you for signing, DME list "
-     "ready (hospital bed, bedside commode, shower chair) for delivery to the daughter's home in "
-     "Newton once confirmed. I'll finalize with Peaceful Passages the moment the family confirms."),
+     "Staged on our side: election form prepped for signature, CTI to you for signing, and a DME list "
+     "ready (hospital bed, bedside commode, shower chair) for the daughter's home in Newton. I still "
+     "need to reach Peaceful Passages to place the referral and arrange intake — nothing is set with "
+     "them yet. I'll move on all of it the moment the family confirms and the CTI is signed."),
 ]
 
 
@@ -541,28 +544,10 @@ def build(session: Session) -> None:
             task_type="verify_eligibility",
             title="Coordinate hospice election",
             description="Confirm home vs inpatient hospice; complete election form and CTI with Peaceful Passages.",
-            status="in_progress",
+            status="pending",
             priority="high",
             assigned_to="Placer",
             related_facility_id="fac-peaceful-hospice",
-        )
-    )
-    session.add(
-        Communication(
-            patient_id=PID,
-            care_task_id="task-hero-c-hospice",
-            facility_id="fac-peaceful-hospice",
-            direction="outbound",
-            modality="phone",
-            party_type="facility",
-            party_name="Peaceful Passages intake",
-            summary=(
-                "Referral packet received; same-day home-hospice admission possible on discharge. "
-                "Outstanding: signed election form and attending CTI. Continuous-care nursing and "
-                "respite confirmed available for the family's night-coverage concern."
-            ),
-            outcome="intake_in_progress",
-            occurred_at=NOW - timedelta(hours=11),
         )
     )
 

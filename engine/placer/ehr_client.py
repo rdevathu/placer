@@ -182,6 +182,30 @@ class EHRClient:
             "outcome": outcome,
         })
 
+    def place_call(
+        self,
+        patient_id: str,
+        task: str,
+        party_type: str = "snf",
+        party_name: Optional[str] = None,
+        facility_id: Optional[str] = None,
+        care_task_id: Optional[str] = None,
+    ) -> dict:
+        """Place a REAL outbound call via the Iliad ``/calls`` endpoint (Bland).
+
+        The backend gate allows autonomous calls only to a SNF; it dials through
+        Bland (force-numbered for the demo) and logs the matching Communication,
+        so the engine must NOT also write one. Returns the backend response
+        (``call_id``, dialed number, logged communication)."""
+        return self._write("POST", "/calls", {
+            "patient_id": patient_id,
+            "task": task,
+            "party_type": party_type,
+            "party_name": party_name,
+            "facility_id": facility_id,
+            "care_task_id": care_task_id,
+        })
+
     # -- placer chat (provider <-> Placer thread rendered in the Iliad UI) ----
 
     def list_placer_messages(self, patient_id: str) -> list:

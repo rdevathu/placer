@@ -14,7 +14,16 @@ import json
 from .. import config, llm
 from .schemas import CallResult
 
-__all__ = ["CallResult", "place_call"]
+__all__ = ["CallResult", "CallsDisabled", "place_call"]
+
+
+class CallsDisabled(RuntimeError):
+    """Raised by :func:`place_call` when ``config.PLACE_CALLS`` is off.
+
+    Placer must not fabricate a call's outcome when no real call is placed.
+    Workers catch this and *park* the task (pending/attempted) instead of
+    writing a communication row, clearing barriers, or inventing results.
+    """
 
 _SIM_SYSTEM = (
     "Simulate a realistic short phone call between Placer (hospital discharge "
@@ -33,7 +42,13 @@ def place_call(objective: str, questions: list, callee: dict, context: str) -> C
     Placer needs answered (answers come back keyed by these strings verbatim),
     ``callee`` a dict describing who picks up (facility record, family member,
     payer line...), and ``context`` free-text case background.
+
+    Raises :class:`CallsDisabled` when ``config.PLACE_CALLS`` is off (the
+    default) — Placer does not place or simulate calls, so there is no honest
+    outcome to return.
     """
+    if not config.PLACE_CALLS:
+        raise CallsDisabled(objective)
     if config.CALL_MODE == "twilio":
         raise NotImplementedError("twilio mode lands post-v1")
     if config.CALL_MODE != "simulated":

@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlmodel import Session
 
 from .. import calls
-from .common import clear_barriers, get_case, get_payload, notify, short_ref
+from .common import clear_barriers, get_case, get_payload, notify, parked, short_ref
 
 TRANSPORT_QUESTIONS = [
     "Can you transport the patient on the planned discharge date and time?",
@@ -21,13 +21,18 @@ def book_transport(session: Session, task, ehr, worker: str) -> dict:
     case = get_case(session, task.case_id)
     payload = get_payload(task)
     vendor = payload.get("vendor") or DEFAULT_VENDOR
-    call = calls.place_call(
-        objective="Book medical transport for a hospital discharge",
-        questions=TRANSPORT_QUESTIONS,
-        callee={"role": "transport dispatcher", "company": vendor},
-        context=case.brief
-        or f"Patient {case.patient_id} discharging; destination {payload.get('destination', 'per discharge order')}",
-    )
+    try:
+        call = calls.place_call(
+            objective="Book medical transport for a hospital discharge",
+            questions=TRANSPORT_QUESTIONS,
+            callee={"role": "transport dispatcher", "company": vendor},
+            context=case.brief
+            or f"Patient {case.patient_id} discharging; destination {payload.get('destination', 'per discharge order')}",
+        )
+    except calls.CallsDisabled:
+        # No real call, no fabricated booking: leave the transport barrier open
+        # and park pending real vendor outreach.
+        return parked("calls_disabled", vendor=vendor)
     booking_ref = short_ref("TRN")
     barriers_cleared = clear_barriers(session, case.id, "transport")
     case.dirty = True

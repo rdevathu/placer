@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session
 
-from ...models import CareTask, Communication, DispoAssessment, Patient
+from ...models import CareTask, DispoAssessment, Patient
 from .common import NOW, condition, encounter, med, note, placer_msg, vital
 
 PID = "hero-b-chf"
@@ -247,10 +247,11 @@ CHAT = [
      "adherence lapses, so home-health nursing for daily weights and med teaching is the key service. "
      "I'm checking HomeTeam Home Health capacity and his BCBS PPO coverage."),
     ("placer", "Placer", -9.0,
-     "Spoke with HomeTeam Home Health intake: they can start skilled nursing visits within 48h of "
-     "referral for daily weights, med reconciliation, and CHF teach-back, and they accept his BCBS "
-     "PPO. They ask for ~24h notice on the start-of-care date. Referral not yet placed — I'll tee it "
-     "up once the discharge date firms."),
+     "HomeTeam Home Health is the agency I'd plan to use here — this service has worked with them "
+     "before, and home-health nursing for daily weights, med reconciliation, and CHF teach-back is "
+     "exactly the service he needs. I haven't reached their intake line yet and no referral is placed; "
+     "I'll confirm their capacity and that they take his BCBS PPO, then tee up the referral once the "
+     "discharge date firms."),
     ("placer", "Placer", -7.0,
      "Question for the team: when do you plan to transition IV furosemide to PO? If the switch "
      "happens this morning and his weight holds overnight, he could discharge tomorrow late morning "
@@ -259,9 +260,10 @@ CHAT = [
      "Switched to torsemide 20 mg PO this morning. If overnight weight is stable, discharge tomorrow "
      "late morning — go ahead and line up HomeTeam for a Sunday start of care."),
     ("placer", "Placer", -2.0,
-     "Done — HomeTeam is penciled in for Sunday start of care pending your discharge order. I'll "
-     "prep CHF teach-back materials for his wife Adaeze (she took tomorrow morning off) and confirm "
-     "the scale-and-log program is in place before he leaves."),
+     "Will do — I'll place the HomeTeam referral and work toward a Sunday start of care pending your "
+     "discharge order; nothing is confirmed with them yet. In the meantime I'll prep CHF teach-back "
+     "materials for his wife Adaeze (she took tomorrow morning off) and make sure the scale-and-log "
+     "program is in place before he leaves."),
 ]
 
 
@@ -424,28 +426,10 @@ def build(session: Session) -> None:
             task_type="draft_consult",
             title="Place home-health referral",
             description="Skilled nursing visits for CHF weight monitoring and med teaching (HomeTeam).",
-            status="in_progress",
+            status="pending",
             priority="medium",
             assigned_to="Placer",
             related_facility_id="fac-hometeam-hh",
-        )
-    )
-    session.add(
-        Communication(
-            patient_id=PID,
-            care_task_id="task-hero-b-hh",
-            facility_id="fac-hometeam-hh",
-            direction="outbound",
-            modality="phone",
-            party_type="facility",
-            party_name="HomeTeam Home Health intake",
-            summary=(
-                "Confirmed capacity to start skilled nursing visits within 48h of referral for daily "
-                "weights, med reconciliation, and CHF teach-back; BCBS PPO accepted. They request "
-                "~24h notice on the start-of-care date."
-            ),
-            outcome="availability_confirmed",
-            occurred_at=NOW - timedelta(hours=9, minutes=30),
         )
     )
 

@@ -15,10 +15,10 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from .. import llm
+from .. import config, llm
 from ..models import Barrier, utcnow
 from ..registry import load_pathways
-from .common import clear_barriers, get_case, get_payload, notify
+from .common import clear_barriers, get_case, get_payload, notify, parked
 
 
 class BenefitsCheck(BaseModel):
@@ -52,6 +52,12 @@ def verify_benefits(session: Session, task, ehr, worker: str) -> dict:
     pathway_ids = payload.get("pathway_ids") or task.pathway_ids or []
     catalog = load_pathways()
     levels = [catalog[p]["name"] for p in pathway_ids if p in catalog] or ["the planned discharge disposition"]
+
+    # Verifying benefits means phoning (or role-playing) the payer line. With
+    # calls disabled we must not fabricate a benefits determination: leave the
+    # payer barrier open, write nothing, and park pending real payer outreach.
+    if not config.PLACE_CALLS:
+        return parked("calls_disabled", pathway_ids=list(pathway_ids), levels=levels)
 
     chart = ehr.get_chart(case.patient_id)
     patient = chart.get("patient") or {}
